@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tableau de bord — Gestion Pièces Auto</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="brand">🔧 Pièces Auto <span class="brand-tag">MVP</span></div>
+    <a class="nav-link active" href="index.html">📊 Tableau de bord</a>
+    <a class="nav-link" href="catalogue.html">📦 Catalogue</a>
+    <a class="nav-link" href="stock.html">↕️ Mouvements stock</a>
+    <a class="nav-link" href="clients.html">👤 Clients</a>
+    <a class="nav-link" href="factures.html">🧾 Factures</a>
+    <div class="sidebar-footer">
+      <div class="hint mono" id="current-user-email" style="margin-bottom:8px;"></div>
+      <button class="btn-logout" onclick="logout()">Déconnexion</button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Tableau de bord</h1>
+        <div class="subtitle">Vue d'ensemble du stock et de l'activité</div>
+      </div>
+    </div>
+
+    <div class="grid-stats">
+      <div class="stat-card"><div class="label">Pièces au catalogue</div><div class="value" id="stat-pieces">—</div></div>
+      <div class="stat-card"><div class="label">Valeur du stock (achat)</div><div class="value" id="stat-valeur">—</div></div>
+      <div class="stat-card warn"><div class="label">Alertes réappro</div><div class="value" id="stat-alertes">—</div></div>
+      <div class="stat-card"><div class="label">Factures validées (mois)</div><div class="value" id="stat-factures">—</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Pièces sous le seuil d'alerte</h3>
+        <a href="catalogue.html" class="hint">Voir le catalogue →</a>
+      </div>
+      <div id="alertes-content">Chargement...</div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+
+  // Stat: nombre de pièces actives + valeur stock (achat)
+  const { data: pieces, error: errPieces } = await supabaseClient
+    .from("pieces").select("id, quantite_stock, prix_achat").eq("actif", true);
+
+  if (!errPieces && pieces) {
+    document.getElementById("stat-pieces").textContent = pieces.length;
+    const valeur = pieces.reduce((sum, p) => sum + (p.quantite_stock * Number(p.prix_achat)), 0);
+    document.getElementById("stat-valeur").textContent = fmtMoney(valeur);
+  }
+
+  // Stat: factures validées ce mois-ci
+  const debutMois = new Date(); debutMois.setDate(1); debutMois.setHours(0,0,0,0);
+  const { data: factures } = await supabaseClient
+    .from("factures").select("id").eq("statut", "VALIDEE").gte("validated_at", debutMois.toISOString());
+  document.getElementById("stat-factures").textContent = factures ? factures.length : "0";
+
+  // Alertes stock
+  const { data: alertes, error: errAlertes } = await supabaseClient
+    .from("vue_alertes_stock").select("*").limit(50);
+
+  const alertesEl = document.getElementById("alertes-content");
+  document.getElementById("stat-alertes").textContent = alertes ? alertes.length : "0";
+
+  if (errAlertes) {
+    alertesEl.innerHTML = `<div class="error-msg">${esc(friendlyError(errAlertes))}</div>`;
+    return;
+  }
+  if (!alertes || alertes.length === 0) {
+    alertesEl.innerHTML = `<div class="empty-state">Aucune alerte — tout le stock est au-dessus du seuil.</div>`;
+    return;
+  }
+  alertesEl.innerHTML = `
+    <table>
+      <thead><tr><th>Référence OEM</th><th>Désignation</th><th>Marque</th><th>Emplacement</th><th class="num">Stock</th><th class="num">Seuil</th></tr></thead>
+      <tbody>
+        ${alertes.map(a => `
+          <tr>
+            <td class="ref">${esc(a.reference_oem)}</td>
+            <td>${esc(a.designation)}</td>
+            <td>${esc(a.marque || "—")}</td>
+            <td>${esc(a.emplacement || "—")}</td>
+            <td class="num"><span class="badge ${a.quantite_stock === 0 ? "badge-danger" : "badge-warn"}">${a.quantite_stock}</span></td>
+            <td class="num">${a.seuil_alerte}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+})();
+</script>
+</body>
+</html>

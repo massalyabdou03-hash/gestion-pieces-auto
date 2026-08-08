@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connexion — Gestion Pièces Auto</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-box">
+      <div class="brand">🔧 Gestion Pièces Auto</div>
+      <p class="hint" style="margin-top:-10px; margin-bottom:18px;">Connecte-toi avec le compte créé dans Supabase Auth.</p>
+      <form id="login-form">
+        <label for="email">Email</label>
+        <input id="email" type="email" required autocomplete="username">
+        <label for="password">Mot de passe</label>
+        <input id="password" type="password" required autocomplete="current-password">
+        <button type="submit" class="btn" style="width:100%; margin-top:20px;" id="submit-btn">Se connecter</button>
+      </form>
+      <div id="msg"></div>
+    </div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+  (async () => {
+    const { data } = await supabaseClient.auth.getSession();
+    if (data.session) window.location.href = "index.html";
+  })();
+
+  const form = document.getElementById("login-form");
+  const msg = document.getElementById("msg");
+  const btn = document.getElementById("submit-btn");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearMsg(msg);
+    btn.disabled = true;
+    btn.textContent = "Connexion...";
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+
+    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      showMsg(msg, "Connexion impossible : " + friendlyError(error));
+      btn.disabled = false;
+      btn.textContent = "Se connecter";
+    } else {
+      window.location.href = "index.html";
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Catalogue — Gestion Pièces Auto</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="brand">🔧 Pièces Auto <span class="brand-tag">MVP</span></div>
+    <a class="nav-link" href="index.html">📊 Tableau de bord</a>
+    <a class="nav-link active" href="catalogue.html">📦 Catalogue</a>
+    <a class="nav-link" href="stock.html">↕️ Mouvements stock</a>
+    <a class="nav-link" href="clients.html">👤 Clients</a>
+    <a class="nav-link" href="factures.html">🧾 Factures</a>
+    <div class="sidebar-footer">
+      <div class="hint mono" id="current-user-email" style="margin-bottom:8px;"></div>
+      <button class="btn-logout" onclick="logout()">Déconnexion</button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Catalogue</h1>
+        <div class="subtitle">Pièces référencées et niveaux de stock</div>
+      </div>
+      <button class="btn" onclick="openModal()">+ Nouvelle pièce</button>
+    </div>
+
+    <div class="card">
+      <div class="toolbar" style="margin-bottom:16px;">
+        <input class="search-input" id="search" placeholder="Rechercher (référence, désignation, marque)...">
+      </div>
+      <div id="table-content">Chargement...</div>
+    </div>
+  </main>
+</div>
+
+<!-- Modal ajout/édition -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modal-title">Nouvelle pièce</h3>
+      <button class="close-x" onclick="closeModal()">×</button>
+    </div>
+    <form id="piece-form">
+      <input type="hidden" id="piece-id">
+      <div class="field-row">
+        <div><label>Référence OEM *</label><input id="reference_oem" required></div>
+        <div><label>Référence interne (SKU) *</label><input id="reference_interne" required></div>
+      </div>
+      <label>Désignation *</label>
+      <input id="designation" required>
+      <div class="field-row-3">
+        <div><label>Marque</label><input id="marque"></div>
+        <div><label>Catégorie</label><input id="categorie"></div>
+        <div><label>Emplacement</label><input id="emplacement" placeholder="ex: A2-03"></div>
+      </div>
+      <div class="field-row-3">
+        <div><label>Prix achat (F)</label><input id="prix_achat" type="number" min="0" step="1" value="0"></div>
+        <div><label>Prix vente (F)</label><input id="prix_vente" type="number" min="0" step="1" value="0"></div>
+        <div><label>Code-barres</label><input id="code_barre"></div>
+      </div>
+      <div class="field-row">
+        <div><label>Stock initial</label><input id="quantite_stock" type="number" min="0" step="1" value="0"></div>
+        <div><label>Seuil d'alerte</label><input id="seuil_alerte" type="number" min="0" step="1" value="1"></div>
+      </div>
+      <p class="hint" id="stock-hint" style="display:none;">Pour modifier le stock d'une pièce existante, passe par la page <strong>Mouvements stock</strong> — cela garde un historique traçable.</p>
+      <div id="form-msg"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeModal()">Annuler</button>
+        <button type="submit" class="btn" id="save-btn">Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+let allPieces = [];
+
+async function loadPieces() {
+  const { data, error } = await supabaseClient
+    .from("pieces").select("*").eq("actif", true).order("designation");
+  const el = document.getElementById("table-content");
+  if (error) { el.innerHTML = `<div class="error-msg">${esc(friendlyError(error))}</div>`; return; }
+  allPieces = data || [];
+  renderTable(allPieces);
+}
+
+function renderTable(pieces) {
+  const el = document.getElementById("table-content");
+  if (pieces.length === 0) {
+    el.innerHTML = `<div class="empty-state">Aucune pièce. Clique sur "+ Nouvelle pièce" pour commencer.</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Référence</th><th>Désignation</th><th>Marque</th><th>Emplacement</th>
+        <th class="num">Prix vente</th><th class="num">Stock</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${pieces.map(p => `
+          <tr>
+            <td><div class="ref">${esc(p.reference_oem)}</div><div class="hint">${esc(p.reference_interne)}</div></td>
+            <td>${esc(p.designation)}</td>
+            <td>${esc(p.marque || "—")}</td>
+            <td>${esc(p.emplacement || "—")}</td>
+            <td class="num">${fmtMoney(p.prix_vente)}</td>
+            <td class="num"><span class="badge ${p.quantite_stock <= p.seuil_alerte ? (p.quantite_stock === 0 ? "badge-danger" : "badge-warn") : "badge-success"}">${p.quantite_stock}</span></td>
+            <td class="actions-cell">
+              <button class="btn-icon" title="Modifier" onclick="editPiece(${p.id})">✏️</button>
+              <button class="btn-icon" title="Supprimer" onclick="deletePiece(${p.id})">🗑️</button>
+            </td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+document.getElementById("search").addEventListener("input", (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  if (!q) { renderTable(allPieces); return; }
+  renderTable(allPieces.filter(p =>
+    (p.reference_oem || "").toLowerCase().includes(q) ||
+    (p.reference_interne || "").toLowerCase().includes(q) ||
+    (p.designation || "").toLowerCase().includes(q) ||
+    (p.marque || "").toLowerCase().includes(q)
+  ));
+});
+
+function openModal() {
+  document.getElementById("piece-form").reset();
+  document.getElementById("piece-id").value = "";
+  document.getElementById("modal-title").textContent = "Nouvelle pièce";
+  document.getElementById("quantite_stock").disabled = false;
+  document.getElementById("stock-hint").style.display = "none";
+  clearMsg(document.getElementById("form-msg"));
+  document.getElementById("modal-backdrop").classList.add("open");
+}
+
+function editPiece(id) {
+  const p = allPieces.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById("piece-id").value = p.id;
+  document.getElementById("reference_oem").value = p.reference_oem;
+  document.getElementById("reference_interne").value = p.reference_interne;
+  document.getElementById("designation").value = p.designation;
+  document.getElementById("marque").value = p.marque || "";
+  document.getElementById("categorie").value = p.categorie || "";
+  document.getElementById("emplacement").value = p.emplacement || "";
+  document.getElementById("prix_achat").value = p.prix_achat;
+  document.getElementById("prix_vente").value = p.prix_vente;
+  document.getElementById("code_barre").value = p.code_barre || "";
+  document.getElementById("quantite_stock").value = p.quantite_stock;
+  document.getElementById("quantite_stock").disabled = true;
+  document.getElementById("seuil_alerte").value = p.seuil_alerte;
+  document.getElementById("stock-hint").style.display = "block";
+  document.getElementById("modal-title").textContent = "Modifier la pièce";
+  clearMsg(document.getElementById("form-msg"));
+  document.getElementById("modal-backdrop").classList.add("open");
+}
+
+function closeModal() {
+  document.getElementById("modal-backdrop").classList.remove("open");
+}
+
+async function deletePiece(id) {
+  const p = allPieces.find(x => x.id === id);
+  if (!confirm(`Supprimer "${p.designation}" ? Cette action masque la pièce du catalogue.`)) return;
+  // Désactivation plutôt que suppression physique : préserve l'historique des factures/mouvements liés.
+  const { error } = await supabaseClient.from("pieces").update({ actif: false }).eq("id", id);
+  if (error) { alert(friendlyError(error)); return; }
+  loadPieces();
+}
+
+document.getElementById("piece-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msgEl = document.getElementById("form-msg");
+  clearMsg(msgEl);
+  const btn = document.getElementById("save-btn");
+  btn.disabled = true; btn.textContent = "Enregistrement...";
+
+  const id = document.getElementById("piece-id").value;
+  const payload = {
+    reference_oem: document.getElementById("reference_oem").value.trim(),
+    reference_interne: document.getElementById("reference_interne").value.trim(),
+    designation: document.getElementById("designation").value.trim(),
+    marque: document.getElementById("marque").value.trim() || null,
+    categorie: document.getElementById("categorie").value.trim() || null,
+    emplacement: document.getElementById("emplacement").value.trim() || null,
+    prix_achat: Number(document.getElementById("prix_achat").value) || 0,
+    prix_vente: Number(document.getElementById("prix_vente").value) || 0,
+    code_barre: document.getElementById("code_barre").value.trim() || null,
+    seuil_alerte: Number(document.getElementById("seuil_alerte").value) || 0,
+  };
+
+  let error;
+  if (id) {
+    ({ error } = await supabaseClient.from("pieces").update(payload).eq("id", id));
+  } else {
+    payload.quantite_stock = Number(document.getElementById("quantite_stock").value) || 0;
+    ({ error } = await supabaseClient.from("pieces").insert(payload));
+  }
+
+  btn.disabled = false; btn.textContent = "Enregistrer";
+  if (error) { showMsg(msgEl, friendlyError(error)); return; }
+  closeModal();
+  loadPieces();
+});
+
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+  loadPieces();
+})();
+</script>
+</body>
+</html>
