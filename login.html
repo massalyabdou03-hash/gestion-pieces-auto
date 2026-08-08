@@ -10,10 +10,10 @@
   <div class="login-wrap">
     <div class="login-box">
       <div class="brand">🔧 Gestion Pièces Auto</div>
-      <p class="hint" style="margin-top:-10px; margin-bottom:18px;">Entre le mot de passe pour accéder à l'application.</p>
+      <p class="hint" style="margin-top:-10px; margin-bottom:18px;">Entre le code d'accès de la boutique.</p>
       <form id="login-form">
-        <label for="password">Mot de passe</label>
-        <input id="password" type="password" required autocomplete="current-password">
+        <label for="code">Code d'accès</label>
+        <input id="code" type="password" required autocomplete="current-password" minlength="6" inputmode="text">
         <button type="submit" class="btn" style="width:100%; margin-top:20px;" id="submit-btn">Se connecter</button>
       </form>
       <div id="msg"></div>
@@ -38,12 +38,17 @@
     clearMsg(msg);
     btn.disabled = true;
     btn.textContent = "Connexion...";
-    const password = document.getElementById("password").value;
+    const code = document.getElementById("code").value.trim();
 
-    const { error } = await supabaseClient.auth.signInWithPassword({ email: ADMIN_EMAIL, password });
+    // Le code d'accès sert à la fois d'identifiant et de mot de passe :
+    // on le transforme en email technique pour Supabase Auth (invisible pour l'utilisateur).
+    const { error } = await supabaseClient.auth.signInWithPassword({
+      email: codeToEmail(code),
+      password: code,
+    });
 
     if (error) {
-      showMsg(msg, "Connexion impossible : " + friendlyError(error));
+      showMsg(msg, friendlyError(error));
       btn.disabled = false;
       btn.textContent = "Se connecter";
     } else {

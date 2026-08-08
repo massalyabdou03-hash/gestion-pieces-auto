@@ -7,7 +7,9 @@ async function requireAuth() {
   }
   const email = data.session.user.email;
   const el = document.getElementById("current-user-email");
-  if (el) el.textContent = email;
+  // L'email est un identifiant technique généré à partir du code d'accès (ex: "1234@acces.local").
+  // On affiche uniquement la partie code, pour ne pas exposer ce détail à l'utilisateur.
+  if (el) el.textContent = "Code : " + (email ? email.split("@")[0] : "");
   return data.session;
 }
 
@@ -50,5 +52,13 @@ function friendlyError(err) {
   if (msg.includes("duplicate key")) return "Cette référence existe déjà.";
   if (msg.includes("violates foreign key")) return "Cet élément est utilisé ailleurs et ne peut pas être supprimé.";
   if (msg.includes("Stock insuffisant")) return msg.split("CONTEXT")[0].trim();
+  if (msg.includes("Invalid login credentials")) return "Code d'accès incorrect.";
+  if (msg.includes("facture n'est plus en brouillon") || msg.includes("déjà")) return msg.split("CONTEXT")[0].trim();
   return msg;
+}
+
+// Construit l'email technique utilisé en interne par Supabase Auth à partir d'un code d'accès.
+// Le domaine est arbitraire et n'a pas besoin d'exister réellement.
+function codeToEmail(code) {
+  return code.trim().toLowerCase().replace(/\s+/g, "") + "@acces.local";
 }
