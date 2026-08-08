@@ -13,7 +13,6 @@
     <a class="nav-link" href="index.html">📊 Tableau de bord</a>
     <a class="nav-link active" href="catalogue.html">📦 Catalogue</a>
     <a class="nav-link" href="stock.html">↕️ Mouvements stock</a>
-    <a class="nav-link" href="clients.html">👤 Clients</a>
     <a class="nav-link" href="factures.html">🧾 Factures</a>
     <div class="sidebar-footer">
       <div class="hint mono" id="current-user-email" style="margin-bottom:8px;"></div>
@@ -27,7 +26,10 @@
         <h1>Catalogue</h1>
         <div class="subtitle">Pièces référencées et niveaux de stock</div>
       </div>
-      <button class="btn" onclick="openModal()">+ Nouvelle pièce</button>
+      <div class="topbar-actions">
+        <button class="btn btn-secondary" onclick="openImportModal()">📥 Importer un catalogue</button>
+        <button class="btn" onclick="openModal()">+ Nouvelle pièce</button>
+      </div>
     </div>
 
     <div class="card">
@@ -78,7 +80,71 @@
   </div>
 </div>
 
+<!-- Modal import catalogue Excel -->
+<div class="modal-backdrop" id="import-backdrop">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3>Importer un ancien catalogue</h3>
+      <button class="close-x" onclick="closeImportModal()">×</button>
+    </div>
+
+    <div class="import-steps">
+      <div class="import-step" id="istep-1">1. Fichier</div>
+      <div class="import-step" id="istep-2">2. Correspondance</div>
+      <div class="import-step" id="istep-3">3. Aperçu</div>
+      <div class="import-step" id="istep-4">4. Résultat</div>
+    </div>
+
+    <!-- Étape 1 : dépôt du fichier -->
+    <div id="import-step-1">
+      <div class="dropzone" id="dropzone" onclick="document.getElementById('import-file-input').click()">
+        <div class="dz-icon">📊</div>
+        <div class="dz-title">Glisse le fichier Excel du catalogue ici</div>
+        <div class="dz-sub">ou clique pour choisir un fichier — .xlsx, .xls ou .csv</div>
+        <input type="file" id="import-file-input" accept=".xlsx,.xls,.csv">
+      </div>
+      <div id="import-file-msg"></div>
+    </div>
+
+    <!-- Étape 2 : mapping des colonnes -->
+    <div id="import-step-2" style="display:none;">
+      <p class="hint" style="margin-top:0;">On a essayé de deviner à quoi correspond chaque colonne de ton fichier. Vérifie et corrige si besoin.</p>
+      <div id="mapping-content"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="backToStep(1)">← Retour</button>
+        <button type="button" class="btn" onclick="buildPreview()">Continuer → Aperçu</button>
+      </div>
+    </div>
+
+    <!-- Étape 3 : aperçu + validation -->
+    <div id="import-step-3" style="display:none;">
+      <div id="preview-summary"></div>
+      <div class="table-scroll" style="margin-top:12px;">
+        <table>
+          <thead id="preview-thead"></thead>
+          <tbody id="preview-tbody"></tbody>
+        </table>
+      </div>
+      <div id="import-preview-msg"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="backToStep(2)">← Retour</button>
+        <button type="button" class="btn" id="run-import-btn" onclick="runImport()">Importer les pièces valides</button>
+      </div>
+    </div>
+
+    <!-- Étape 4 : résultat -->
+    <div id="import-step-4" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="import-progress-fill" style="width:0%;"></div></div>
+      <div id="import-result-content"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" onclick="closeImportModal(); loadPieces();">Terminer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/app.js"></script>
 <script>
@@ -213,6 +279,335 @@ document.getElementById("piece-form").addEventListener("submit", async (e) => {
   closeModal();
   loadPieces();
 });
+
+/* =========================================================================
+   IMPORT DE L'ANCIEN CATALOGUE (Excel / CSV) — drag & drop, 100% côté client
+   ========================================================================= */
+
+// Champs de la table "pieces" que l'on peut remplir depuis le fichier importé.
+const IMPORT_FIELDS = [
+  { key: "reference_oem",     label: "Référence OEM",        required: true,  numeric: false },
+  { key: "reference_interne", label: "Référence interne (SKU)", required: false, numeric: false, note: "générée automatiquement si absente" },
+  { key: "designation",       label: "Désignation",          required: true,  numeric: false },
+  { key: "marque",            label: "Marque",               required: false, numeric: false },
+  { key: "categorie",         label: "Catégorie",            required: false, numeric: false },
+  { key: "emplacement",       label: "Emplacement",          required: false, numeric: false },
+  { key: "code_barre",        label: "Code-barres",          required: false, numeric: false },
+  { key: "prix_achat",        label: "Prix d'achat",         required: false, numeric: true },
+  { key: "prix_vente",        label: "Prix de vente",        required: false, numeric: true },
+  { key: "quantite_stock",    label: "Stock actuel",         required: false, numeric: true },
+  { key: "seuil_alerte",      label: "Seuil d'alerte",       required: false, numeric: true },
+];
+
+// Mots-clés utilisés pour deviner automatiquement quelle colonne du fichier correspond à quel champ.
+const IMPORT_KEYWORDS = {
+  reference_oem:     ["referenceoem", "refoem", "oem", "reference", "ref", "codeoem"],
+  reference_interne: ["referenceinterne", "refinterne", "sku", "codeinterne", "codearticle", "codeproduit", "referencemagasin"],
+  designation:       ["designation", "description", "libelle", "nom", "article", "produit", "intitule"],
+  marque:            ["marque", "brand", "fabricant"],
+  categorie:         ["categorie", "famille", "type", "rayon"],
+  emplacement:       ["emplacement", "localisation", "position", "casier"],
+  code_barre:        ["codebarre", "codebarres", "ean", "barcode", "eanupc"],
+  prix_achat:        ["prixachat", "prixdachat", "achat", "cout", "coutunitaire", "pa", "prixrevient"],
+  prix_vente:        ["prixvente", "prixdevente", "vente", "prixpublic", "pv", "prix", "tarif"],
+  quantite_stock:    ["stock", "quantite", "qte", "quantitestock", "qtestock", "quantiteenstock"],
+  seuil_alerte:      ["seuil", "seuilalerte", "alerte", "stockmin", "stockminimum", "reappro"],
+};
+
+let importState = {
+  headers: [],       // en-têtes détectées dans le fichier
+  rows: [],           // lignes brutes (tableaux), sans l'en-tête
+  mapping: {},         // { champ_app: index_colonne | "" }
+  validRows: [],        // lignes prêtes à insérer, après mapping + validation
+  invalidRows: [],       // lignes rejetées avec la raison
+};
+
+function normalizeHeader(str) {
+  return String(str || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // retire les accents
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function openImportModal() {
+  importState = { headers: [], rows: [], mapping: {}, validRows: [], invalidRows: [] };
+  document.getElementById("import-file-input").value = "";
+  clearMsg(document.getElementById("import-file-msg"));
+  showImportStep(1);
+  document.getElementById("import-backdrop").classList.add("open");
+}
+
+function closeImportModal() {
+  document.getElementById("import-backdrop").classList.remove("open");
+}
+
+function showImportStep(n) {
+  for (let i = 1; i <= 4; i++) {
+    document.getElementById(`import-step-${i}`).style.display = i === n ? "block" : "none";
+    const dot = document.getElementById(`istep-${i}`);
+    dot.classList.toggle("active", i === n);
+    dot.classList.toggle("done", i < n);
+  }
+}
+
+function backToStep(n) { showImportStep(n); }
+
+// --- Étape 1 : dépôt / sélection du fichier ---------------------------------
+
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("import-file-input");
+
+["dragenter", "dragover"].forEach(evt =>
+  dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.add("dragover"); })
+);
+["dragleave", "drop"].forEach(evt =>
+  dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove("dragover"); })
+);
+dropzone.addEventListener("drop", (e) => {
+  const file = e.dataTransfer.files?.[0];
+  if (file) handleImportFile(file);
+});
+fileInput.addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  if (file) handleImportFile(file);
+});
+
+function handleImportFile(file) {
+  const msgEl = document.getElementById("import-file-msg");
+  clearMsg(msgEl);
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false, blankrows: false });
+
+      if (!rows || rows.length < 2) {
+        showMsg(msgEl, "Ce fichier ne contient pas de lignes de données exploitables.");
+        return;
+      }
+
+      importState.headers = rows[0].map(h => String(h ?? "").trim());
+      importState.rows = rows.slice(1);
+      autoMapColumns();
+      renderMapping();
+      showImportStep(2);
+    } catch (err) {
+      showMsg(msgEl, "Impossible de lire ce fichier. Vérifie qu'il s'agit bien d'un fichier Excel (.xlsx, .xls) ou CSV.");
+    }
+  };
+  reader.onerror = () => showMsg(msgEl, "Erreur de lecture du fichier.");
+  reader.readAsArrayBuffer(file);
+}
+
+// --- Étape 2 : correspondance des colonnes -----------------------------------
+
+function autoMapColumns() {
+  const normalizedHeaders = importState.headers.map(normalizeHeader);
+  const used = new Set();
+  importState.mapping = {};
+
+  IMPORT_FIELDS.forEach(field => {
+    const keywords = IMPORT_KEYWORDS[field.key] || [];
+    let bestIdx = -1;
+    // correspondance exacte d'abord, puis correspondance "contient"
+    for (const kw of keywords) {
+      const exactIdx = normalizedHeaders.findIndex((h, i) => !used.has(i) && h === kw);
+      if (exactIdx !== -1) { bestIdx = exactIdx; break; }
+    }
+    if (bestIdx === -1) {
+      for (const kw of keywords) {
+        const containsIdx = normalizedHeaders.findIndex((h, i) => !used.has(i) && h.includes(kw));
+        if (containsIdx !== -1) { bestIdx = containsIdx; break; }
+      }
+    }
+    importState.mapping[field.key] = bestIdx;
+    if (bestIdx !== -1) used.add(bestIdx);
+  });
+}
+
+function renderMapping() {
+  const el = document.getElementById("mapping-content");
+  const options = importState.headers.map((h, i) => `<option value="${i}">${esc(h || `Colonne ${i + 1}`)}</option>`).join("");
+
+  el.innerHTML = IMPORT_FIELDS.map(field => `
+    <div class="mapping-row">
+      <div class="field-name">
+        ${esc(field.label)} ${field.required ? '<span class="req">*</span>' : ""}
+        ${field.note ? `<div class="opt">${esc(field.note)}</div>` : ""}
+      </div>
+      <select data-field="${field.key}" onchange="onMappingChange('${field.key}', this.value)">
+        <option value="-1">— Ne pas importer —</option>
+        ${options}
+      </select>
+    </div>`).join("");
+
+  // applique le mapping auto détecté
+  IMPORT_FIELDS.forEach(field => {
+    const sel = el.querySelector(`select[data-field="${field.key}"]`);
+    sel.value = String(importState.mapping[field.key] ?? -1);
+  });
+}
+
+function onMappingChange(fieldKey, value) {
+  importState.mapping[fieldKey] = Number(value);
+}
+
+// --- Étape 3 : aperçu + validation --------------------------------------------
+
+function buildPreview() {
+  const msgEl = document.getElementById("import-preview-msg");
+  clearMsg(msgEl);
+
+  if (importState.mapping.reference_oem === -1 || importState.mapping.designation === -1) {
+    showMsg(msgEl, "La Référence OEM et la Désignation sont obligatoires : associe-les à une colonne pour continuer.");
+    return;
+  }
+
+  const valid = [];
+  const invalid = [];
+  const seenRefInterne = new Set(allPieces.map(p => p.reference_interne));
+  const seenInBatch = new Set();
+  let autoSkuCounter = 1;
+
+  importState.rows.forEach((row, idx) => {
+    const get = (key) => {
+      const colIdx = importState.mapping[key];
+      if (colIdx === undefined || colIdx === -1) return "";
+      return String(row[colIdx] ?? "").trim();
+    };
+    const getNum = (key, fallback = 0) => {
+      const raw = get(key).replace(/\s/g, "").replace(",", ".").replace(/[^\d.-]/g, "");
+      const n = parseFloat(raw);
+      return isNaN(n) ? fallback : n;
+    };
+
+    const reference_oem = get("reference_oem");
+    const designation = get("designation");
+
+    if (!reference_oem && !designation) return; // ligne vide, on l'ignore silencieusement
+
+    if (!reference_oem || !designation) {
+      invalid.push({ line: idx + 2, reason: "Référence OEM ou désignation manquante", raw: row });
+      return;
+    }
+
+    let reference_interne = get("reference_interne");
+    if (!reference_interne) {
+      // génère une référence interne à partir de la référence OEM, avec repli séquentiel si collision
+      let base = reference_oem.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20) || "PIECE";
+      let candidate = base;
+      while (seenRefInterne.has(candidate) || seenInBatch.has(candidate)) {
+        candidate = `${base}-${autoSkuCounter++}`;
+      }
+      reference_interne = candidate;
+    }
+
+    if (seenRefInterne.has(reference_interne) || seenInBatch.has(reference_interne)) {
+      invalid.push({ line: idx + 2, reason: `Référence interne "${reference_interne}" en doublon`, raw: row });
+      return;
+    }
+    seenInBatch.add(reference_interne);
+
+    valid.push({
+      reference_oem,
+      reference_interne,
+      designation,
+      marque: get("marque") || null,
+      categorie: get("categorie") || null,
+      emplacement: get("emplacement") || null,
+      code_barre: get("code_barre") || null,
+      prix_achat: getNum("prix_achat", 0),
+      prix_vente: getNum("prix_vente", 0),
+      quantite_stock: Math.round(getNum("quantite_stock", 0)),
+      seuil_alerte: Math.round(getNum("seuil_alerte", 1)),
+      actif: true,
+    });
+  });
+
+  importState.validRows = valid;
+  importState.invalidRows = invalid;
+  renderPreview();
+  showImportStep(3);
+}
+
+function renderPreview() {
+  const summaryEl = document.getElementById("preview-summary");
+  summaryEl.innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-item ok"><div class="n">${importState.validRows.length}</div><div class="l">Prêtes à importer</div></div>
+      <div class="summary-item err"><div class="n">${importState.invalidRows.length}</div><div class="l">Ignorées</div></div>
+      <div class="summary-item"><div class="n">${importState.rows.length}</div><div class="l">Lignes du fichier</div></div>
+    </div>
+    ${importState.invalidRows.length > 0 ? `
+      <p class="hint" style="margin-top:12px;">
+        ${importState.invalidRows.slice(0, 5).map(i => `Ligne ${i.line} : ${esc(i.reason)}`).join(" · ")}
+        ${importState.invalidRows.length > 5 ? ` · … et ${importState.invalidRows.length - 5} autre(s)` : ""}
+      </p>` : ""}
+  `;
+
+  const thead = document.getElementById("preview-thead");
+  const tbody = document.getElementById("preview-tbody");
+  thead.innerHTML = `<tr><th>Réf. OEM</th><th>Réf. interne</th><th>Désignation</th><th>Marque</th><th class="num">Prix vente</th><th class="num">Stock</th></tr>`;
+  const sample = importState.validRows.slice(0, 25);
+  tbody.innerHTML = sample.length === 0
+    ? `<tr><td colspan="6" class="hint" style="text-align:center;">Aucune ligne valide à importer.</td></tr>`
+    : sample.map(p => `
+      <tr>
+        <td class="ref">${esc(p.reference_oem)}</td>
+        <td class="ref">${esc(p.reference_interne)}</td>
+        <td>${esc(p.designation)}</td>
+        <td>${esc(p.marque || "—")}</td>
+        <td class="num">${fmtMoney(p.prix_vente)}</td>
+        <td class="num">${p.quantite_stock}</td>
+      </tr>`).join("") + (importState.validRows.length > 25 ? `<tr><td colspan="6" class="hint" style="text-align:center;">… et ${importState.validRows.length - 25} autre(s) ligne(s)</td></tr>` : "");
+}
+
+// --- Étape 4 : import réel dans Supabase --------------------------------------
+
+async function runImport() {
+  const btn = document.getElementById("run-import-btn");
+  btn.disabled = true; btn.textContent = "Import en cours...";
+
+  showImportStep(4);
+  const fill = document.getElementById("import-progress-fill");
+  const resultEl = document.getElementById("import-result-content");
+  fill.style.width = "0%";
+  resultEl.innerHTML = `<p class="hint">Import des pièces en cours, ne ferme pas cette fenêtre...</p>`;
+
+  const CHUNK_SIZE = 200;
+  const rows = importState.validRows;
+  let inserted = 0;
+  let failed = 0;
+  const errors = [];
+
+  for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + CHUNK_SIZE);
+    const { error } = await supabaseClient.from("pieces").upsert(chunk, { onConflict: "reference_interne" });
+    if (error) {
+      failed += chunk.length;
+      errors.push(friendlyError(error));
+    } else {
+      inserted += chunk.length;
+    }
+    fill.style.width = `${Math.round(((i + chunk.length) / rows.length) * 100)}%`;
+  }
+
+  btn.disabled = false; btn.textContent = "Importer les pièces valides";
+
+  resultEl.innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-item ok"><div class="n">${inserted}</div><div class="l">Importées</div></div>
+      <div class="summary-item err"><div class="n">${failed}</div><div class="l">Échouées</div></div>
+      <div class="summary-item warn"><div class="n">${importState.invalidRows.length}</div><div class="l">Ignorées avant import</div></div>
+    </div>
+    ${errors.length > 0 ? `<div class="error-msg" style="margin-top:14px;">${errors.slice(0, 3).map(esc).join("<br>")}</div>` : ""}
+    ${inserted > 0 ? `<div class="success-msg" style="margin-top:14px;">${inserted} pièce(s) ajoutée(s) ou mise(s) à jour dans le catalogue.</div>` : ""}
+  `;
+}
 
 (async () => {
   const session = await requireAuth();

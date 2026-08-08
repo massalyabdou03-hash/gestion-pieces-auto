@@ -1,3 +1,157 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Factures — Gestion Pièces Auto</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="brand">🔧 Pièces Auto <span class="brand-tag">MVP</span></div>
+    <a class="nav-link" href="index.html">📊 Tableau de bord</a>
+    <a class="nav-link" href="catalogue.html">📦 Catalogue</a>
+    <a class="nav-link" href="stock.html">↕️ Mouvements stock</a>
+    <a class="nav-link active" href="factures.html">🧾 Factures</a>
+    <div class="sidebar-footer">
+      <div class="hint mono" id="current-user-email" style="margin-bottom:8px;"></div>
+      <button class="btn-logout" onclick="logout()">Déconnexion</button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <div><h1>Factures</h1><div class="subtitle">Brouillons et factures validées</div></div>
+      <button class="btn" onclick="toggleNewForm()" id="toggle-new-btn">+ Nouvelle facture</button>
+    </div>
+
+    <div class="card" id="new-facture-card" style="display:none;">
+      <h3>Nouvelle facture (brouillon)</h3>
+      <label>Client *</label>
+      <div class="input-with-action">
+        <select id="client_id" required><option value="">Sélectionner un client...</option></select>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="openQuickClient()">+ Nouveau</button>
+      </div>
+
+      <table style="margin-top:16px;">
+        <thead><tr><th>Pièce</th><th style="width:90px;">Qté</th><th style="width:120px;">Prix unit.</th><th style="width:110px;">Montant</th><th></th></tr></thead>
+        <tbody id="lignes-body"></tbody>
+      </table>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin-top:10px;" onclick="addLigne()">+ Ajouter une ligne</button>
+
+      <div style="text-align:right; margin-top:16px; font-family:var(--font-display); font-size:1.2rem;">
+        Total : <span id="total-facture" class="mono">0 F</span>
+      </div>
+
+      <div id="new-facture-msg"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="toggleNewForm()">Annuler</button>
+        <button type="button" class="btn" id="save-facture-btn" onclick="saveFacture()">Enregistrer en brouillon</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Historique</h3></div>
+      <div id="table-content">Chargement...</div>
+    </div>
+  </main>
+</div>
+
+<!-- Modal création rapide de client -->
+<div class="modal-backdrop" id="quick-client-backdrop">
+  <div class="modal modal-sm">
+    <div class="modal-head"><h3>Nouveau client</h3><button class="close-x" onclick="closeQuickClient()">×</button></div>
+    <form id="quick-client-form">
+      <label>Nom / Raison sociale *</label>
+      <input id="qc-nom" required>
+      <div class="field-row">
+        <div><label>Téléphone</label><input id="qc-telephone"></div>
+        <div><label>Email</label><input id="qc-email" type="email"></div>
+      </div>
+      <div id="quick-client-msg"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeQuickClient()">Annuler</button>
+        <button type="submit" class="btn" id="qc-save-btn">Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+let piecesList = [];
+let ligneCounter = 0;
+
+function toggleNewForm() {
+  const card = document.getElementById("new-facture-card");
+  const isOpen = card.style.display !== "none";
+  card.style.display = isOpen ? "none" : "block";
+  if (!isOpen && document.getElementById("lignes-body").children.length === 0) addLigne();
+}
+
+function addLigne() {
+  ligneCounter++;
+  const id = ligneCounter;
+  const tbody = document.getElementById("lignes-body");
+  const tr = document.createElement("tr");
+  tr.id = `ligne-${id}`;
+  tr.innerHTML = `
+    <td>
+      <select class="ligne-piece" onchange="onPieceChange(${id})">
+        <option value="">Sélectionner...</option>
+        ${piecesList.map(p => `<option value="${p.id}" data-prix="${p.prix_vente}" data-stock="${p.quantite_stock}">${esc(p.designation)} (stock: ${p.quantite_stock})</option>`).join("")}
+      </select>
+    </td>
+    <td><input type="number" class="ligne-qte" min="1" step="1" value="1" onchange="recalcLigne(${id})"></td>
+    <td><input type="number" class="ligne-prix" min="0" step="1" value="0" onchange="recalcLigne(${id})"></td>
+    <td class="num ligne-montant mono">0 F</td>
+    <td><button type="button" class="btn-icon" onclick="removeLigne(${id})">🗑️</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+function removeLigne(id) {
+  document.getElementById(`ligne-${id}`)?.remove();
+  recalcTotal();
+}
+
+function onPieceChange(id) {
+  const tr = document.getElementById(`ligne-${id}`);
+  const sel = tr.querySelector(".ligne-piece");
+  const opt = sel.options[sel.selectedIndex];
+  const prix = opt?.dataset?.prix || 0;
+  tr.querySelector(".ligne-prix").value = prix;
+  recalcLigne(id);
+}
+
+function recalcLigne(id) {
+  const tr = document.getElementById(`ligne-${id}`);
+  const qte = Number(tr.querySelector(".ligne-qte").value) || 0;
+  const prix = Number(tr.querySelector(".ligne-prix").value) || 0;
+  tr.querySelector(".ligne-montant").textContent = fmtMoney(qte * prix);
+  recalcTotal();
+}
+
+function recalcTotal() {
+  let total = 0;
+  document.querySelectorAll("#lignes-body tr").forEach(tr => {
+    const qte = Number(tr.querySelector(".ligne-qte")?.value) || 0;
+    const prix = Number(tr.querySelector(".ligne-prix")?.value) || 0;
+    total += qte * prix;
+  });
+  document.getElementById("total-facture").textContent = fmtMoney(total);
+}
+
+async function saveFacture() {
+  const msgEl = document.getElementById("new-facture-msg");
+  clearMsg(msgEl);
+
+  const clientId = document.getElementById("client_id").value;
+  if (!clientId) { showMsg(msgEl, "Sélectionne un client."); return; }
+
   const lignes = [];
   document.querySelectorAll("#lignes-body tr").forEach(tr => {
     const pieceId = tr.querySelector(".ligne-piece").value;
@@ -12,3 +166,120 @@
       lignes.push({ piece_id: Number(pieceId), designation: piece.designation, quantite: qte, prix_unitaire: prix, montant: qte * prix });
     }
   });
+
+  if (lignes.length === 0) { showMsg(msgEl, "Ajoute au moins une ligne valide."); return; }
+
+  const btn = document.getElementById("save-facture-btn");
+  btn.disabled = true; btn.textContent = "Enregistrement...";
+
+  const total = lignes.reduce((s, l) => s + l.montant, 0);
+
+  const { data: facture, error: errFacture } = await supabaseClient
+    .from("factures").insert({ client_id: Number(clientId), montant_total: total }).select().single();
+
+  if (errFacture) {
+    btn.disabled = false; btn.textContent = "Enregistrer en brouillon";
+    showMsg(msgEl, friendlyError(errFacture));
+    return;
+  }
+
+  const lignesPayload = lignes.map(l => ({ ...l, facture_id: facture.id }));
+  const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
+
+  btn.disabled = false; btn.textContent = "Enregistrer en brouillon";
+
+  if (errLignes) { showMsg(msgEl, friendlyError(errLignes)); return; }
+
+  window.location.href = `facture-detail.html?id=${facture.id}`;
+}
+
+async function loadPieces() {
+  const { data } = await supabaseClient.from("pieces").select("id, designation, prix_vente, quantite_stock").eq("actif", true).order("designation");
+  piecesList = data || [];
+}
+
+async function loadClientsSelect() {
+  const { data } = await supabaseClient.from("clients").select("id, nom").order("nom");
+  const sel = document.getElementById("client_id");
+  (data || []).forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c.id; opt.textContent = c.nom;
+    sel.appendChild(opt);
+  });
+}
+
+function openQuickClient() {
+  document.getElementById("quick-client-form").reset();
+  clearMsg(document.getElementById("quick-client-msg"));
+  document.getElementById("quick-client-backdrop").classList.add("open");
+  document.getElementById("qc-nom").focus();
+}
+
+function closeQuickClient() {
+  document.getElementById("quick-client-backdrop").classList.remove("open");
+}
+
+document.getElementById("quick-client-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msgEl = document.getElementById("quick-client-msg");
+  clearMsg(msgEl);
+  const btn = document.getElementById("qc-save-btn");
+  btn.disabled = true; btn.textContent = "Enregistrement...";
+
+  const payload = {
+    nom: document.getElementById("qc-nom").value.trim(),
+    telephone: document.getElementById("qc-telephone").value.trim() || null,
+    email: document.getElementById("qc-email").value.trim() || null,
+  };
+
+  const { data, error } = await supabaseClient.from("clients").insert(payload).select().single();
+
+  btn.disabled = false; btn.textContent = "Enregistrer";
+  if (error) { showMsg(msgEl, friendlyError(error)); return; }
+
+  const sel = document.getElementById("client_id");
+  const opt = document.createElement("option");
+  opt.value = data.id; opt.textContent = data.nom;
+  sel.appendChild(opt);
+  sel.value = data.id;
+
+  closeQuickClient();
+});
+
+async function loadFactures() {
+  const el = document.getElementById("table-content");
+  const { data, error } = await supabaseClient
+    .from("factures").select("id, numero_facture, statut, montant_total, mode_paiement, created_at, clients(nom)")
+    .order("created_at", { ascending: false }).limit(100);
+
+  if (error) { el.innerHTML = `<div class="error-msg">${esc(friendlyError(error))}</div>`; return; }
+  if (!data || data.length === 0) { el.innerHTML = `<div class="empty-state">Aucune facture pour le moment.</div>`; return; }
+
+  const badgeClass = { BROUILLON: "badge-muted", VALIDEE: "badge-success", ANNULEE: "badge-danger" };
+
+  el.innerHTML = `
+    <table>
+      <thead><tr><th>N° facture</th><th>Client</th><th>Statut</th><th class="num">Montant</th><th>Date</th></tr></thead>
+      <tbody>
+        ${data.map(f => `
+          <tr style="cursor:pointer;" onclick="window.location.href='facture-detail.html?id=${f.id}'">
+            <td class="ref">${esc(f.numero_facture || "brouillon-" + f.id)}</td>
+            <td>${esc(f.clients?.nom || "—")}</td>
+            <td><span class="badge ${badgeClass[f.statut]}">${f.statut}</span></td>
+            <td class="num">${fmtMoney(f.montant_total)}</td>
+            <td class="hint">${fmtDate(f.created_at)}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+  await loadPieces();
+  await loadClientsSelect();
+  loadFactures();
+})();
+</script>
+</body>
+</html>
