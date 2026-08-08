@@ -238,10 +238,16 @@ function closeModal() {
 
 async function deletePiece(id) {
   const p = allPieces.find(x => x.id === id);
-  if (!confirm(`Supprimer "${p.designation}" ? Cette action masque la pièce du catalogue.`)) return;
+  const ok = await confirmDialog(`Supprimer "${p.designation}" ? Cette action masque la pièce du catalogue.`, {
+    title: "Supprimer la pièce",
+    confirmLabel: "Supprimer",
+    danger: true,
+  });
+  if (!ok) return;
   // Désactivation plutôt que suppression physique : préserve l'historique des factures/mouvements liés.
   const { error } = await supabaseClient.from("pieces").update({ actif: false }).eq("id", id);
-  if (error) { alert(friendlyError(error)); return; }
+  if (error) { showToast(friendlyError(error), "error"); return; }
+  showToast(`"${p.designation}" supprimée du catalogue.`, "success");
   loadPieces();
 }
 
