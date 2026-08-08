@@ -471,6 +471,8 @@ function buildPreview() {
   const invalid = [];
   const seenRefInterne = new Set(allPieces.map(p => p.reference_interne));
   const seenInBatch = new Set();
+  const seenCodeBarre = new Set(allPieces.map(p => p.code_barre).filter(Boolean));
+  const seenCodeBarreInBatch = new Set();
   let autoSkuCounter = 1;
 
   importState.rows.forEach((row, idx) => {
@@ -512,6 +514,20 @@ function buildPreview() {
     }
     seenInBatch.add(reference_interne);
 
+    // Le code-barres est unique en base : un doublon (avec l'existant ou dans ce même
+    // fichier) ferait échouer tout le lot à l'import. On garde la ligne mais on vide
+    // le code-barres en doublon plutôt que de rejeter la pièce.
+    let code_barre = get("code_barre") || null;
+    let code_barre_doublon = false;
+    if (code_barre) {
+      if (seenCodeBarre.has(code_barre) || seenCodeBarreInBatch.has(code_barre)) {
+        code_barre_doublon = true;
+        code_barre = null;
+      } else {
+        seenCodeBarreInBatch.add(code_barre);
+      }
+    }
+
     valid.push({
       reference_oem,
       reference_interne,
@@ -519,12 +535,13 @@ function buildPreview() {
       marque: get("marque") || null,
       categorie: get("categorie") || null,
       emplacement: get("emplacement") || null,
-      code_barre: get("code_barre") || null,
+      code_barre,
       prix_achat: getNum("prix_achat", 0),
       prix_vente: getNum("prix_vente", 0),
       quantite_stock: Math.round(getNum("quantite_stock", 0)),
       seuil_alerte: Math.round(getNum("seuil_alerte", 1)),
       actif: true,
+      _code_barre_doublon: code_barre_doublon,
     });
   });
 
@@ -536,6 +553,7 @@ function buildPreview() {
 
 function renderPreview() {
   const summaryEl = document.getElementById("preview-summary");
+  const doublonsCodeBarre = importState.validRows.filter(p => p._code_barre_doublon).length;
   summaryEl.innerHTML = `
     <div class="summary-grid">
       <div class="summary-item ok"><div class="n">${importState.validRows.length}</div><div class="l">Prêtes à importer</div></div>
@@ -547,6 +565,8 @@ function renderPreview() {
         ${importState.invalidRows.slice(0, 5).map(i => `Ligne ${i.line} : ${esc(i.reason)}`).join(" · ")}
         ${importState.invalidRows.length > 5 ? ` · … et ${importState.invalidRows.length - 5} autre(s)` : ""}
       </p>` : ""}
+    ${doublonsCodeBarre > 0 ? `
+      <p class="hint" style="margin-top:6px;">${doublonsCodeBarre} pièce(s) importée(s) sans code-barres (déjà utilisé par une autre pièce).</p>` : ""}
   `;
 
   const thead = document.getElementById("preview-thead");
@@ -585,7 +605,7 @@ async function runImport() {
   const errors = [];
 
   for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
-    const chunk = rows.slice(i, i + CHUNK_SIZE);
+    const chunk = rows.slice(i, i + CHUNK_SIZE).map(({ _code_barre_doublon, ...p }) => p);
     const { error } = await supabaseClient.from("pieces").upsert(chunk, { onConflict: "reference_interne" });
     if (error) {
       failed += chunk.length;
