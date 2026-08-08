@@ -34,10 +34,12 @@
         <button type="button" class="btn btn-secondary btn-sm" onclick="openQuickClient()">+ Nouveau</button>
       </div>
 
-      <table style="margin-top:16px;">
-        <thead><tr><th>Pièce</th><th style="width:90px;">Qté</th><th style="width:120px;">Prix unit.</th><th style="width:110px;">Montant</th><th></th></tr></thead>
-        <tbody id="lignes-body"></tbody>
-      </table>
+      <div class="table-wrapper">
+        <table style="margin-top:16px;">
+          <thead><tr><th>Pièce</th><th style="width:90px;">Qté</th><th style="width:120px;">Prix unit.</th><th style="width:110px;">Montant</th><th></th></tr></thead>
+          <tbody id="lignes-body"></tbody>
+        </table>
+      </div>
       <button type="button" class="btn btn-secondary btn-sm" style="margin-top:10px;" onclick="addLigne()">+ Ajouter une ligne</button>
 
       <div style="text-align:right; margin-top:16px; font-family:var(--font-display); font-size:1.2rem;">
@@ -53,7 +55,7 @@
 
     <div class="card">
       <div class="card-head"><h3>Historique</h3></div>
-      <div id="table-content">Chargement...</div>
+      <div id="table-content" class="table-wrapper">Chargement...</div>
     </div>
   </main>
 </div>
