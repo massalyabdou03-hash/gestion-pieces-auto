@@ -53,7 +53,7 @@ body::before{
   content:"";
   position:fixed; top:-160px; right:-180px;
   width:680px; height:680px;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Ccircle cx='100' cy='100' r='95' fill='none' stroke='%2322d3c9' stroke-width='2'/%3E%[...]";
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Ccircle cx='100' cy='100' r='95' fill='none' stroke='%2322d3c9' stroke-width='2'/%3E%5B...]");
   background-repeat:no-repeat; background-size:contain;
   opacity:0.05; pointer-events:none; z-index:0;
 }
@@ -104,7 +104,7 @@ body::before{
   background: var(--accent-dim); color: var(--accent-hi); border-left-color: var(--accent);
   box-shadow: inset 0 0 0 1px rgba(34,211,201,0.14);
 }
-.sidebar-footer{margin-top:auto; padding-top:16px; border-top:1px solid var(--border-soft);} 
+.sidebar-footer{margin-top:auto; padding-top:16px; border-top:1px solid var(--border-soft);}
 .btn-logout{
   width:100%; background:none; border:1px solid var(--border); color:var(--text-muted);
   padding:9px 12px; border-radius: var(--radius); cursor:pointer; font-size:0.85rem; font-family:var(--font-body);
@@ -181,13 +181,13 @@ button{ font-family:var(--font-body); cursor:pointer; }
 .btn:disabled{ opacity:0.5; cursor:not-allowed; transform:none; box-shadow:none; }
 .btn-secondary{ background:var(--surface-2); color:var(--text); border:1px solid var(--border); box-shadow:none; }
 .btn-secondary:hover{ background:var(--surface-3); filter:none; box-shadow:none; }
-.btn-danger{ background:var(--danger-dim); color:var(--danger); border:1px solid var(--danger); box-shadow:none;} 
+.btn-danger{ background:var(--danger-dim); color:var(--danger); border:1px solid var(--danger); box-shadow:none;}
 .btn-danger:hover{ background: var(--danger); color:#1a0a09; filter:none; }
-.btn-sm{ padding:6px 12px; font-size:0.8rem; border-radius:6px;} 
-.btn-icon{ background:none; border:none; color:var(--text-muted); font-size:1rem; padding:5px 8px; border-radius:6px; transition: all 0.12s ease;} 
-.btn-icon:hover{ color: var(--accent-hi); background: var(--surface-2); } 
+.btn-sm{ padding:6px 12px; font-size:0.8rem; border-radius:6px;}
+.btn-icon{ background:none; border:none; color:var(--text-muted); font-size:1rem; padding:5px 8px; border-radius:6px; transition: all 0.12s ease;}
+.btn-icon:hover{ color: var(--accent-hi); background: var(--surface-2); }
 
-.actions-cell{ display:flex; gap:4px; justify-content:flex-end;} 
+.actions-cell{ display:flex; gap:4px; justify-content:flex-end;}
 
 /* ---------- modal ---------- */
 .modal-backdrop{
@@ -206,7 +206,7 @@ button{ font-family:var(--font-body); cursor:pointer; }
 @keyframes modalIn{ from{opacity:0; transform:translateY(-8px) scale(0.98);} to{opacity:1; transform:translateY(0) scale(1);} }
 .modal-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;}
 .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:20px;}
-.close-x{ background:none; border:none; color:var(--text-muted); font-size:1.3rem; line-height:1; border-radius:6px; padding:2px 6px; transition: all 0.12s ease;} 
+.close-x{ background:none; border:none; color:var(--text-muted); font-size:1.3rem; line-height:1; border-radius:6px; padding:2px 6px; transition: all 0.12s ease;}
 .close-x:hover{ color:var(--text); background:var(--surface-2); }
 
 /* ---------- misc ---------- */
@@ -267,7 +267,7 @@ button{ font-family:var(--font-body); cursor:pointer; }
 }
 .btn-danger-solid:hover{ filter:brightness(1.06); transform:translateY(-1px); }
 
-.hint{ color:var(--text-muted); font-size:0.8rem; margin-top:4px;} 
+.hint{ color:var(--text-muted); font-size:0.8rem; margin-top:4px;}
 .search-input{ max-width:280px; }
 .toolbar{ display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
 
@@ -279,7 +279,7 @@ button{ font-family:var(--font-body); cursor:pointer; }
   content:"";
   position:absolute; top:50%; left:50%; width:920px; height:920px;
   transform:translate(-50%,-50%);
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Ccircle cx='100' cy='100' r='95' fill='none' stroke='%2322d3c9' stroke-width='1.6'/%[...]");
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Ccircle cx='100' cy='100' r='95' fill='none' stroke='%2322d3c9' stroke-width='1.6'/%5B...]");
   background-repeat:no-repeat; background-size:contain;
   opacity:0.05; pointer-events:none;
 }
