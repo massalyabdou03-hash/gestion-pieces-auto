@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Détail facture — Gestion Pièces Auto</title>
+<title>Détail facture — Sylla Automobile — Ziguinchor</title>
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 <div class="app">
   <nav class="sidebar no-print">
-    <div class="brand">🔧 Pièces Auto <span class="brand-tag">MVP</span></div>
+    <div class="brand"><img src="assets/img/logo-sylla-icon.png" class="brand-logo" alt="Sylla Automobile"> Sylla Automobile <span class="brand-tag">Ziguinchor</span></div>
     <a class="nav-link" href="index.html">📊 Tableau de bord</a>
     <a class="nav-link" href="catalogue.html">📦 Catalogue</a>
     <a class="nav-link" href="stock.html">↕️ Mouvements stock</a>
@@ -52,6 +52,19 @@ async function loadFacture() {
 
   el.innerHTML = `
     <div class="card">
+      <div class="invoice-header">
+        <div class="ih-logo">
+          <img src="assets/img/logo-sylla-icon.png" alt="Sylla Automobile">
+          <div>
+            <div class="ih-name">SYLLA AUTOMOBILE</div>
+            <div class="ih-sub">Ziguinchor, Sénégal</div>
+          </div>
+        </div>
+        <div class="ih-contact">
+          <div><strong>WhatsApp :</strong> +221 77 545 81 60</div>
+          <div><strong>WhatsApp :</strong> +221 78 929 44 44</div>
+        </div>
+      </div>
       <div class="card-head">
         <div>
           <h1>${esc(facture.numero_facture || "Brouillon #" + facture.id)}</h1>
