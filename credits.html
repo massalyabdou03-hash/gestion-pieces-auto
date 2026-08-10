@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emprunts clients — Sylla Automobile — Ziguinchor</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="brand"><img src="assets/img/logo-sylla-icon.png" class="brand-logo" alt="Sylla Automobile"> Sylla Automobile <span class="brand-tag">Ziguinchor</span></div>
+    <a class="nav-link" href="index.html">📊 Tableau de bord</a>
+    <a class="nav-link" href="catalogue.html">📦 Catalogue</a>
+    <a class="nav-link" href="stock.html">↕️ Mouvements stock</a>
+    <a class="nav-link" href="factures.html">🧾 Factures</a>
+    <a class="nav-link active" href="credits.html">💳 Emprunts</a>
+    <div class="sidebar-footer">
+      <div class="hint mono" id="current-user-email" style="margin-bottom:8px;"></div>
+      <button class="btn-logout" onclick="logout()">Déconnexion</button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Emprunts clients</h1>
+        <div class="subtitle">Clients ayant pris des pièces à crédit (bons) et leurs échéances de paiement</div>
+      </div>
+    </div>
+
+    <div class="grid-stats">
+      <div class="stat-card danger"><div class="label">Total dû (non payé)</div><div class="value" id="stat-total">—</div></div>
+      <div class="stat-card danger"><div class="label">Bons en retard</div><div class="value" id="stat-retard">—</div></div>
+      <div class="stat-card warn"><div class="label">À payer cette semaine</div><div class="value" id="stat-semaine">—</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Bons en cours</h3>
+        <div class="toolbar">
+          <button type="button" class="btn btn-sm" id="tab-impayes" onclick="setFilter('impayes')">Non payés</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="tab-retard" onclick="setFilter('retard')">En retard</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="tab-tous" onclick="setFilter('tous')">Tous</button>
+        </div>
+      </div>
+      <div id="table-content">Chargement...</div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+let currentFilter = "impayes";
+
+function setFilter(filter) {
+  currentFilter = filter;
+  ["impayes", "retard", "tous"].forEach(f => {
+    document.getElementById(`tab-${f}`).className = f === filter ? "btn btn-sm" : "btn btn-secondary btn-sm";
+  });
+  loadEmprunts();
+}
+
+async function loadStats() {
+  const { data } = await supabaseClient
+    .from("factures")
+    .select("montant_total, date_echeance")
+    .eq("mode_paiement", "CREDIT").eq("statut", "VALIDEE").eq("paye", false);
+
+  const rows = data || [];
+  const total = rows.reduce((s, f) => s + Number(f.montant_total), 0);
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dansUneSemaine = new Date(today); dansUneSemaine.setDate(today.getDate() + 7);
+
+  let retard = 0, semaine = 0;
+  rows.forEach(f => {
+    if (!f.date_echeance) return;
+    const d = new Date(f.date_echeance);
+    if (d < today) retard++;
+    else if (d <= dansUneSemaine) semaine++;
+  });
+
+  document.getElementById("stat-total").textContent = fmtMoney(total);
+  document.getElementById("stat-retard").textContent = retard;
+  document.getElementById("stat-semaine").textContent = semaine;
+}
+
+async function loadEmprunts() {
+  const el = document.getElementById("table-content");
+  el.innerHTML = "Chargement...";
+
+  let query = supabaseClient
+    .from("factures")
+    .select("id, numero_facture, montant_total, created_at, echeance_type, date_echeance, paye, paye_at, clients(nom, telephone)")
+    .eq("mode_paiement", "CREDIT").eq("statut", "VALIDEE")
+    .order("date_echeance", { ascending: true });
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (currentFilter === "impayes") query = query.eq("paye", false);
+  if (currentFilter === "retard") query = query.eq("paye", false).lt("date_echeance", todayStr);
+
+  const { data, error } = await query;
+
+  if (error) { el.innerHTML = `<div class="error-msg">${esc(friendlyError(error))}</div>`; return; }
+  if (!data || data.length === 0) { el.innerHTML = `<div class="empty-state">Aucun bon à afficher pour ce filtre.</div>`; return; }
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dansUneSemaine = new Date(today); dansUneSemaine.setDate(today.getDate() + 7);
+
+  el.innerHTML = `
+    <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Client</th><th>Téléphone</th><th>N° bon</th><th class="num">Montant</th>
+          <th>Vendu le</th><th>Échéance</th><th>Date limite</th><th>Statut</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.map(f => {
+          const echDate = f.date_echeance ? new Date(f.date_echeance) : null;
+          let statutLabel = "À venir", statutClass = "badge-info";
+          if (f.paye) { statutLabel = "Payé"; statutClass = "badge-success"; }
+          else if (echDate && echDate < today) { statutLabel = "En retard"; statutClass = "badge-danger"; }
+          else if (echDate && echDate <= dansUneSemaine) { statutLabel = "Cette semaine"; statutClass = "badge-warn"; }
+
+          return `
+          <tr style="cursor:pointer;" onclick="window.location.href='facture-detail.html?id=${f.id}'">
+            <td>${esc(f.clients?.nom || "—")}</td>
+            <td class="hint">${esc(f.clients?.telephone || "—")}</td>
+            <td class="ref">${esc(f.numero_facture || "—")}</td>
+            <td class="num">${fmtMoney(f.montant_total)}</td>
+            <td class="hint">${fmtDate(f.created_at)}</td>
+            <td><span class="badge badge-muted">${f.echeance_type === "SEMAINE" ? "Sous 1 semaine" : "Sous 1 mois"}</span></td>
+            <td class="hint">${fmtDate(f.date_echeance)}</td>
+            <td><span class="badge ${statutClass}">${statutLabel}</span></td>
+            <td>${f.paye ? "" : `<button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); marquerPaye(${f.id})">Marquer payé</button>`}</td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+    </div>`;
+}
+
+async function marquerPaye(id) {
+  const ok = await confirmDialog("Marquer ce bon comme payé ?", { confirmLabel: "Marquer payé", danger: false });
+  if (!ok) return;
+
+  const { error } = await supabaseClient
+    .from("factures").update({ paye: true, paye_at: new Date().toISOString() }).eq("id", id);
+
+  if (error) { showToast(friendlyError(error), "error"); return; }
+  showToast("Bon marqué comme payé.", "success");
+  loadStats();
+  loadEmprunts();
+}
+
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+  loadStats();
+  loadEmprunts();
+})();
+</script>
+</body>
+</html>

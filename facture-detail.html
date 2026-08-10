@@ -14,6 +14,7 @@
     <a class="nav-link" href="catalogue.html">📦 Catalogue</a>
     <a class="nav-link" href="stock.html">↕️ Mouvements stock</a>
     <a class="nav-link active" href="factures.html">🧾 Factures</a>
+    <a class="nav-link" href="credits.html">💳 Emprunts</a>
     <div class="sidebar-footer">
       <div class="hint mono" id="current-user-email" style="margin-bottom:8px;"></div>
       <button class="btn-logout" onclick="logout()">Déconnexion</button>
@@ -35,6 +36,13 @@
 <script>
 const params = new URLSearchParams(window.location.search);
 const factureId = params.get("id");
+
+const modePaiementLabel = { ESPECES: "Espèces", CARTE: "Carte", VIREMENT: "Virement", CHEQUE: "Chèque", CREDIT: "Crédit (bon)" };
+
+function onModePaiementChange() {
+  const isCredit = document.getElementById("mode_paiement").value === "CREDIT";
+  document.getElementById("echeance-field").style.display = isCredit ? "block" : "none";
+}
 
 async function loadFacture() {
   const el = document.getElementById("content");
@@ -83,9 +91,25 @@ async function loadFacture() {
         </div>
         <div>
           <label style="margin-top:0;">Mode de paiement</label>
-          <div>${facture.mode_paiement || "—"}</div>
+          <div>${modePaiementLabel[facture.mode_paiement] || facture.mode_paiement || "—"}</div>
         </div>
       </div>
+
+      ${facture.mode_paiement === "CREDIT" ? `
+        <div class="field-row" style="margin-bottom:6px;">
+          <div>
+            <label style="margin-top:0;">Échéance</label>
+            <div>${facture.echeance_type === "SEMAINE" ? "Sous 1 semaine" : "Sous 1 mois"} — ${fmtDate(facture.date_echeance)}</div>
+          </div>
+          <div>
+            <label style="margin-top:0;">Statut du paiement</label>
+            <div>
+              <span class="badge ${facture.paye ? "badge-success" : "badge-warn"}">${facture.paye ? "Payé" : "Non payé"}</span>
+              ${!facture.paye ? `<button type="button" class="btn btn-secondary btn-sm no-print" style="margin-left:10px;" onclick="marquerPaye()">Marquer comme payé</button>` : ""}
+            </div>
+          </div>
+        </div>
+      ` : ""}
 
       <table style="margin-top:18px;">
         <thead><tr><th>Désignation</th><th class="num">Qté</th><th class="num">Prix unit.</th><th class="num">Montant</th></tr></thead>
@@ -109,12 +133,20 @@ async function loadFacture() {
           <h3>Valider la facture</h3>
           <p class="hint">La validation déstocke automatiquement chaque pièce et attribue un numéro définitif. Cette action est irréversible.</p>
           <label>Mode de paiement *</label>
-          <select id="mode_paiement" style="max-width:220px;">
+          <select id="mode_paiement" style="max-width:220px;" onchange="onModePaiementChange()">
             <option value="ESPECES">Espèces</option>
             <option value="CARTE">Carte</option>
             <option value="VIREMENT">Virement</option>
             <option value="CHEQUE">Chèque</option>
+            <option value="CREDIT">Crédit (bon — le client paie plus tard)</option>
           </select>
+          <div id="echeance-field" style="display:none; margin-top:12px;">
+            <label>Le client paie sous *</label>
+            <select id="echeance_type" style="max-width:220px;">
+              <option value="SEMAINE">1 semaine</option>
+              <option value="MOIS">1 mois</option>
+            </select>
+          </div>
           <div id="validate-msg"></div>
           <button class="btn" style="margin-top:14px;" id="validate-btn" onclick="validerFacture()">Valider et déstocker</button>
         </div>
@@ -126,17 +158,33 @@ async function loadFacture() {
 async function validerFacture() {
   const msgEl = document.getElementById("validate-msg");
   clearMsg(msgEl);
+  const modePaiement = document.getElementById("mode_paiement").value;
+  const echeanceType = modePaiement === "CREDIT" ? document.getElementById("echeance_type").value : null;
+
   const btn = document.getElementById("validate-btn");
   btn.disabled = true; btn.textContent = "Validation...";
 
   const { error } = await supabaseClient.rpc("valider_facture", {
     p_facture_id: Number(factureId),
-    p_mode_paiement: document.getElementById("mode_paiement").value,
+    p_mode_paiement: modePaiement,
+    p_echeance_type: echeanceType,
   });
 
   btn.disabled = false; btn.textContent = "Valider et déstocker";
 
   if (error) { showMsg(msgEl, friendlyError(error)); return; }
+  loadFacture();
+}
+
+async function marquerPaye() {
+  const ok = await confirmDialog("Marquer ce bon comme payé ?", { confirmLabel: "Marquer payé", danger: false });
+  if (!ok) return;
+
+  const { error } = await supabaseClient
+    .from("factures").update({ paye: true, paye_at: new Date().toISOString() }).eq("id", factureId);
+
+  if (error) { showToast(friendlyError(error), "error"); return; }
+  showToast("Bon marqué comme payé.", "success");
   loadFacture();
 }
 
