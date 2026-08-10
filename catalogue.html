@@ -34,7 +34,7 @@
 
     <div class="card">
       <div class="toolbar" style="margin-bottom:16px;">
-        <input class="search-input" id="search" placeholder="Rechercher (référence, désignation, marque)...">
+        <input class="search-input" id="search" placeholder="Rechercher (référence, désignation, marque, emplacement)...">
       </div>
       <div id="table-content">Chargement...</div>
     </div>
@@ -196,7 +196,8 @@ document.getElementById("search").addEventListener("input", (e) => {
     (p.reference_oem || "").toLowerCase().includes(q) ||
     (p.reference_interne || "").toLowerCase().includes(q) ||
     (p.designation || "").toLowerCase().includes(q) ||
-    (p.marque || "").toLowerCase().includes(q)
+    (p.marque || "").toLowerCase().includes(q) ||
+    (p.emplacement || "").toLowerCase().includes(q)
   ));
 });
 
