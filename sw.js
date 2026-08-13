@@ -15,7 +15,7 @@
 // postes déjà installés continueront de servir l'ancienne version en cache.
 // =============================================================================
 
-const CACHE_VERSION = "v7";
+const CACHE_VERSION = "v8";
 const SHELL_CACHE = `sylla-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `sylla-runtime-${CACHE_VERSION}`;
 
