@@ -10,6 +10,7 @@ async function requireAuth() {
   // L'email est un identifiant technique généré à partir du code d'accès (ex: "1234@acces.local").
   // On affiche uniquement la partie code, pour ne pas exposer ce détail à l'utilisateur.
   if (el) el.textContent = "Code : " + (email ? email.split("@")[0] : "");
+  initConnectivity();
   return data.session;
 }
 
@@ -158,4 +159,216 @@ function friendlyError(err) {
 // Le domaine est arbitraire et n'a pas besoin d'exister réellement.
 function codeToEmail(code) {
   return code.trim().toLowerCase().replace(/\s+/g, "") + "@acces.local";
+}
+
+// =============================================================================
+// MODE HORS CONNEXION — cache local (catalogue/clients) + ventes en différé
+// La boutique n'a qu'un seul poste : pas besoin de résoudre des conflits entre
+// plusieurs appareils, juste de rejouer les ventes dans l'ordre au retour du réseau.
+// =============================================================================
+
+function readLocal(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeLocal(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (err) {
+    console.error("Erreur d'écriture locale", err);
+  }
+}
+
+function cachePiecesLocally(pieces) {
+  writeLocal("sylla_cache_pieces", { savedAt: new Date().toISOString(), items: pieces });
+}
+function getCachedPieces() {
+  return readLocal("sylla_cache_pieces", { savedAt: null, items: [] });
+}
+function cacheClientsLocally(clients) {
+  writeLocal("sylla_cache_clients", { savedAt: new Date().toISOString(), items: clients });
+}
+function getCachedClients() {
+  return readLocal("sylla_cache_clients", { savedAt: null, items: [] });
+}
+
+function getPendingSales() {
+  return readLocal("sylla_pending_sales", []);
+}
+function savePendingSales(sales) {
+  writeLocal("sylla_pending_sales", sales);
+}
+function queuePendingSale(sale) {
+  const sales = getPendingSales();
+  const entry = {
+    id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: new Date().toISOString(),
+    status: "pending",
+    errorMsg: null,
+    ...sale,
+  };
+  sales.push(entry);
+  savePendingSales(sales);
+  document.dispatchEvent(new CustomEvent("sylla:pending-sales-updated"));
+  return entry;
+}
+function updatePendingSale(id, patch) {
+  const sales = getPendingSales();
+  const idx = sales.findIndex(s => s.id === id);
+  if (idx === -1) return;
+  sales[idx] = { ...sales[idx], ...patch };
+  savePendingSales(sales);
+}
+function removePendingSale(id) {
+  savePendingSales(getPendingSales().filter(s => s.id !== id));
+  document.dispatchEvent(new CustomEvent("sylla:pending-sales-updated"));
+}
+
+// Quantité déjà réservée par des ventes pas encore synchronisées, pour ne pas
+// survendre les derniers exemplaires pendant qu'on est hors ligne.
+function getReservedQuantity(pieceId) {
+  return getPendingSales()
+    .filter(s => s.status !== "error")
+    .reduce((sum, s) => sum + s.lignes.filter(l => l.piece_id === pieceId).reduce((a, l) => a + l.quantite, 0), 0);
+}
+
+// ---------- Détection de connexion ----------
+const OFFLINE_PROBE_TIMEOUT_MS = 5000;
+const OFFLINE_RECHECK_INTERVAL_MS = 30000;
+
+let appIsOnline = navigator.onLine;
+let connectivityInitialized = false;
+let offlineRecheckTimer = null;
+let syncInProgress = false;
+
+// navigator.onLine ne garantit pas un accès internet réel (juste qu'une interface
+// réseau existe) : on vérifie avec une vraie requête avant de déclarer la reconnexion.
+async function probeOnline() {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OFFLINE_PROBE_TIMEOUT_MS);
+    const { error } = await supabaseClient.from("pieces").select("id").limit(1).abortSignal(controller.signal);
+    clearTimeout(timeout);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+function ensureOfflineBanner() {
+  let el = document.getElementById("offline-banner");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "offline-banner";
+    el.className = "offline-banner";
+    document.body.prepend(el);
+  }
+  return el;
+}
+
+function setOnlineState(isOnline) {
+  const wasOnline = appIsOnline;
+  appIsOnline = isOnline;
+  const banner = ensureOfflineBanner();
+
+  if (!isOnline) {
+    banner.textContent = "Hors connexion — les ventes sont enregistrées localement et seront synchronisées automatiquement au retour d'internet.";
+    banner.className = "offline-banner offline-banner-off show";
+    if (!offlineRecheckTimer) {
+      offlineRecheckTimer = setInterval(async () => {
+        if (await probeOnline()) handleBackOnline();
+      }, OFFLINE_RECHECK_INTERVAL_MS);
+    }
+  } else {
+    if (offlineRecheckTimer) { clearInterval(offlineRecheckTimer); offlineRecheckTimer = null; }
+    if (!wasOnline) {
+      banner.textContent = "Connexion rétablie — synchronisation en cours...";
+      banner.className = "offline-banner offline-banner-on show";
+      setTimeout(() => banner.classList.remove("show"), 4000);
+    } else {
+      banner.classList.remove("show");
+    }
+  }
+  document.dispatchEvent(new CustomEvent("sylla:connectivity-changed", { detail: { online: isOnline } }));
+}
+
+async function handleBackOnline() {
+  if (offlineRecheckTimer) { clearInterval(offlineRecheckTimer); offlineRecheckTimer = null; }
+  setOnlineState(true);
+  await syncPendingSales();
+}
+
+function initConnectivity() {
+  if (connectivityInitialized) return;
+  connectivityInitialized = true;
+
+  window.addEventListener("offline", () => setOnlineState(false));
+  window.addEventListener("online", async () => {
+    if (await probeOnline()) handleBackOnline();
+  });
+
+  setOnlineState(navigator.onLine);
+  if (navigator.onLine) {
+    probeOnline().then(ok => ok ? syncPendingSales() : setOnlineState(false));
+  }
+}
+
+// ---------- Moteur de synchronisation des ventes en attente ----------
+// Rejoue exactement le même chemin que la vente en ligne (brouillon + factures_lignes
+// + RPC valider_facture) donc le numéro de facture officiel et le déstockage réel
+// n'existent qu'à partir de la synchronisation, pas au moment de la vente hors ligne.
+async function syncPendingSales() {
+  if (syncInProgress) return;
+  syncInProgress = true;
+  try {
+    const sales = getPendingSales()
+      .filter(s => s.status === "pending" || s.status === "error")
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+    for (const sale of sales) {
+      updatePendingSale(sale.id, { status: "syncing", errorMsg: null });
+      try {
+        let clientId = sale.client.id;
+        if (sale.client.mode === "new") {
+          const { data: newClient, error: errClient } = await supabaseClient
+            .from("clients")
+            .insert({ nom: sale.client.nom, telephone: sale.client.telephone || null, email: sale.client.email || null })
+            .select().single();
+          if (errClient) throw errClient;
+          clientId = newClient.id;
+          // On fige le client en "existing" tout de suite : si une étape suivante échoue et
+          // qu'on retente plus tard, on ne recrée pas un deuxième client en double.
+          updatePendingSale(sale.id, { client: { mode: "existing", id: clientId, nom: sale.client.nom } });
+        }
+
+        const { data: facture, error: errFacture } = await supabaseClient
+          .from("factures").insert({ client_id: clientId, montant_total: sale.total }).select().single();
+        if (errFacture) throw errFacture;
+
+        const lignesPayload = sale.lignes.map(l => ({ ...l, facture_id: facture.id }));
+        const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
+        if (errLignes) throw errLignes;
+
+        const { error: errValidation } = await supabaseClient.rpc("valider_facture", {
+          p_facture_id: facture.id,
+          p_mode_paiement: sale.mode_paiement,
+          p_echeance_type: sale.echeance_type || null,
+        });
+        if (errValidation) throw errValidation;
+
+        removePendingSale(sale.id);
+        showToast(`Vente de ${sale.client.nom} synchronisée.`, "success");
+      } catch (err) {
+        updatePendingSale(sale.id, { status: "error", errorMsg: friendlyError(err) });
+      }
+    }
+  } finally {
+    syncInProgress = false;
+    document.dispatchEvent(new CustomEvent("sylla:pending-sales-updated"));
+  }
 }

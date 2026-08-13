@@ -32,7 +32,7 @@
       <h3>Nouvelle facture (brouillon)</h3>
       <label>Client *</label>
       <div class="input-with-action">
-        <select id="client_id" required><option value="">Sélectionner un client...</option></select>
+        <select id="client_id" required onchange="updateOfflineFieldsVisibility()"><option value="">Sélectionner un client...</option></select>
         <button type="button" class="btn btn-secondary btn-sm" onclick="openQuickClient()">+ Nouveau</button>
       </div>
 
@@ -41,6 +41,29 @@
         <tbody id="lignes-body"></tbody>
       </table>
       <button type="button" class="btn btn-secondary btn-sm" style="margin-top:10px;" onclick="addLigne()">+ Ajouter une ligne</button>
+
+      <div id="offline-payment-fields" style="display:none; margin-top:16px;">
+        <p class="hint" style="margin-top:0;">Hors connexion : choisis le mode de paiement maintenant — la facture sera validée automatiquement (numéro officiel + déstockage) dès le retour de la connexion.</p>
+        <div class="field-row">
+          <div>
+            <label>Mode de paiement *</label>
+            <select id="offline_mode_paiement" onchange="onOfflineModePaiementChange()">
+              <option value="ESPECES">Espèces</option>
+              <option value="CARTE">Carte</option>
+              <option value="VIREMENT">Virement</option>
+              <option value="CHEQUE">Chèque</option>
+              <option value="CREDIT">Crédit (bon — le client paie plus tard)</option>
+            </select>
+          </div>
+          <div id="offline-echeance-field" style="display:none;">
+            <label>Le client paie sous *</label>
+            <select id="offline_echeance_type">
+              <option value="SEMAINE">1 semaine</option>
+              <option value="MOIS">1 mois</option>
+            </select>
+          </div>
+        </div>
+      </div>
 
       <div style="text-align:right; margin-top:16px; font-family:var(--font-display); font-size:1.2rem;">
         Total : <span id="total-facture" class="mono">0 F</span>
@@ -51,6 +74,14 @@
         <button type="button" class="btn btn-secondary" onclick="toggleNewForm()">Annuler</button>
         <button type="button" class="btn" id="save-facture-btn" onclick="saveFacture()">Enregistrer en brouillon</button>
       </div>
+    </div>
+
+    <div class="card" id="pending-sales-card" style="display:none;">
+      <div class="card-head">
+        <h3>Ventes en attente de synchronisation</h3>
+        <button class="btn btn-secondary btn-sm" onclick="syncPendingSales()">Synchroniser maintenant</button>
+      </div>
+      <div id="pending-sales-content"></div>
     </div>
 
     <div class="card">
@@ -86,12 +117,30 @@
 <script>
 let piecesList = [];
 let ligneCounter = 0;
+let pendingNewClients = {}; // clients créés hors ligne, en attente d'un vrai id Supabase
 
 function toggleNewForm() {
   const card = document.getElementById("new-facture-card");
   const isOpen = card.style.display !== "none";
   card.style.display = isOpen ? "none" : "block";
-  if (!isOpen && document.getElementById("lignes-body").children.length === 0) addLigne();
+  if (!isOpen) {
+    if (document.getElementById("lignes-body").children.length === 0) addLigne();
+    updateOfflineFieldsVisibility();
+  }
+}
+
+function updateOfflineFieldsVisibility() {
+  // Un client créé hors ligne doit passer par la file d'attente même si la connexion
+  // est revenue entre-temps (il n'a pas encore de vrai id Supabase).
+  const clientId = document.getElementById("client_id").value;
+  const needsOfflineFields = !appIsOnline || clientId.startsWith("new-");
+  document.getElementById("offline-payment-fields").style.display = needsOfflineFields ? "block" : "none";
+  document.getElementById("save-facture-btn").textContent = needsOfflineFields ? "Enregistrer la vente (hors ligne)" : "Enregistrer en brouillon";
+}
+
+function onOfflineModePaiementChange() {
+  const isCredit = document.getElementById("offline_mode_paiement").value === "CREDIT";
+  document.getElementById("offline-echeance-field").style.display = isCredit ? "block" : "none";
 }
 
 function addLigne() {
@@ -104,7 +153,10 @@ function addLigne() {
     <td>
       <select class="ligne-piece" onchange="onPieceChange(${id})">
         <option value="">Sélectionner...</option>
-        ${piecesList.map(p => `<option value="${p.id}" data-prix="${p.prix_vente}" data-stock="${p.quantite_stock}">${esc(p.designation)} (stock: ${p.quantite_stock})</option>`).join("")}
+        ${piecesList.map(p => {
+          const disponible = p.quantite_stock - getReservedQuantity(p.id);
+          return `<option value="${p.id}" data-prix="${p.prix_vente}" data-stock="${disponible}">${esc(p.designation)} (stock: ${disponible})</option>`;
+        }).join("")}
       </select>
     </td>
     <td><input type="number" class="ligne-qte" min="1" step="1" value="1" onchange="recalcLigne(${id})"></td>
@@ -151,8 +203,8 @@ async function saveFacture() {
   const msgEl = document.getElementById("new-facture-msg");
   clearMsg(msgEl);
 
-  const clientId = document.getElementById("client_id").value;
-  if (!clientId) { showMsg(msgEl, "Sélectionne un client."); return; }
+  const clientIdRaw = document.getElementById("client_id").value;
+  if (!clientIdRaw) { showMsg(msgEl, "Sélectionne un client."); return; }
 
   const lignes = [];
   document.querySelectorAll("#lignes-body tr").forEach(tr => {
@@ -171,13 +223,36 @@ async function saveFacture() {
 
   if (lignes.length === 0) { showMsg(msgEl, "Ajoute au moins une ligne valide."); return; }
 
+  const total = lignes.reduce((s, l) => s + l.montant, 0);
+  const isDraftClient = clientIdRaw.startsWith("new-");
+
+  // Un client créé hors ligne n'a pas de vrai id Supabase : on passe forcément par la
+  // file d'attente pour lui, même si la connexion est déjà revenue entre-temps.
+  if (!appIsOnline || isDraftClient) {
+    const modePaiement = document.getElementById("offline_mode_paiement").value;
+    const echeanceType = modePaiement === "CREDIT" ? document.getElementById("offline_echeance_type").value : null;
+    if (modePaiement === "CREDIT" && !echeanceType) { showMsg(msgEl, "Précise l'échéance du crédit."); return; }
+
+    const clientPayload = isDraftClient
+      ? { mode: "new", ...pendingNewClients[clientIdRaw] }
+      : { mode: "existing", id: Number(clientIdRaw), nom: document.getElementById("client_id").selectedOptions[0]?.textContent || "" };
+
+    queuePendingSale({ client: clientPayload, lignes, total, mode_paiement: modePaiement, echeance_type: echeanceType });
+    showToast("Vente enregistrée hors ligne — elle sera synchronisée automatiquement au retour de la connexion.", "info");
+    toggleNewForm();
+    document.getElementById("lignes-body").innerHTML = "";
+    document.getElementById("total-facture").textContent = fmtMoney(0);
+    document.getElementById("client_id").value = "";
+    renderPendingSales();
+    if (appIsOnline) syncPendingSales();
+    return;
+  }
+
   const btn = document.getElementById("save-facture-btn");
   btn.disabled = true; btn.textContent = "Enregistrement...";
 
-  const total = lignes.reduce((s, l) => s + l.montant, 0);
-
   const { data: facture, error: errFacture } = await supabaseClient
-    .from("factures").insert({ client_id: Number(clientId), montant_total: total }).select().single();
+    .from("factures").insert({ client_id: Number(clientIdRaw), montant_total: total }).select().single();
 
   if (errFacture) {
     btn.disabled = false; btn.textContent = "Enregistrer en brouillon";
@@ -196,16 +271,30 @@ async function saveFacture() {
 }
 
 async function loadPieces() {
-  const { data } = await fetchAllRows(() =>
+  const { data, error } = await fetchAllRows(() =>
     supabaseClient.from("pieces").select("id, designation, prix_vente, quantite_stock").eq("actif", true).order("designation").order("id")
   );
-  piecesList = data || [];
+  if (!error && data) {
+    piecesList = data;
+    cachePiecesLocally(data);
+  } else {
+    const cached = getCachedPieces();
+    piecesList = cached.items;
+    if (cached.savedAt) showToast(`Catalogue hors ligne : données du ${fmtDateTime(cached.savedAt)}.`, "info");
+  }
 }
 
 async function loadClientsSelect() {
-  const { data } = await supabaseClient.from("clients").select("id, nom").order("nom");
+  const { data, error } = await supabaseClient.from("clients").select("id, nom").order("nom");
+  let clients;
+  if (!error && data) {
+    clients = data;
+    cacheClientsLocally(data);
+  } else {
+    clients = getCachedClients().items;
+  }
   const sel = document.getElementById("client_id");
-  (data || []).forEach(c => {
+  clients.forEach(c => {
     const opt = document.createElement("option");
     opt.value = c.id; opt.textContent = c.nom;
     sel.appendChild(opt);
@@ -227,21 +316,37 @@ document.getElementById("quick-client-form").addEventListener("submit", async (e
   e.preventDefault();
   const msgEl = document.getElementById("quick-client-msg");
   clearMsg(msgEl);
-  const btn = document.getElementById("qc-save-btn");
-  btn.disabled = true; btn.textContent = "Enregistrement...";
 
   const payload = {
     nom: document.getElementById("qc-nom").value.trim(),
     telephone: document.getElementById("qc-telephone").value.trim() || null,
     email: document.getElementById("qc-email").value.trim() || null,
   };
+  if (!payload.nom) { showMsg(msgEl, "Le nom est obligatoire."); return; }
+
+  const sel = document.getElementById("client_id");
+
+  if (!appIsOnline) {
+    // Pas d'id Supabase possible hors ligne : le client réel sera créé à la synchronisation.
+    const tempId = `new-${Date.now()}`;
+    pendingNewClients[tempId] = payload;
+    const opt = document.createElement("option");
+    opt.value = tempId; opt.textContent = `${payload.nom} (hors ligne)`;
+    sel.appendChild(opt);
+    sel.value = tempId;
+    updateOfflineFieldsVisibility();
+    closeQuickClient();
+    return;
+  }
+
+  const btn = document.getElementById("qc-save-btn");
+  btn.disabled = true; btn.textContent = "Enregistrement...";
 
   const { data, error } = await supabaseClient.from("clients").insert(payload).select().single();
 
   btn.disabled = false; btn.textContent = "Enregistrer";
   if (error) { showMsg(msgEl, friendlyError(error)); return; }
 
-  const sel = document.getElementById("client_id");
   const opt = document.createElement("option");
   opt.value = data.id; opt.textContent = data.nom;
   sel.appendChild(opt);
@@ -277,12 +382,66 @@ async function loadFactures() {
     </table>`;
 }
 
+function renderPendingSales() {
+  const card = document.getElementById("pending-sales-card");
+  const el = document.getElementById("pending-sales-content");
+  const sales = getPendingSales();
+
+  if (sales.length === 0) { card.style.display = "none"; return; }
+  card.style.display = "block";
+
+  const statusBadge = {
+    pending: '<span class="badge badge-warn">En attente</span>',
+    syncing: '<span class="badge badge-info">Synchronisation...</span>',
+    error: '<span class="badge badge-danger">Erreur</span>',
+  };
+
+  el.innerHTML = `
+    <table>
+      <thead><tr><th>Client</th><th>Lignes</th><th class="num">Total</th><th>Statut</th><th></th></tr></thead>
+      <tbody>
+        ${sales.map(s => `
+          <tr>
+            <td>${esc(s.client.nom)}</td>
+            <td class="hint">${s.lignes.map(l => `${esc(l.designation)} ×${l.quantite}`).join(", ")}</td>
+            <td class="num">${fmtMoney(s.total)}</td>
+            <td>
+              ${statusBadge[s.status] || ""}
+              ${s.status === "error" ? `<div class="hint" style="color:var(--danger); margin-top:4px;">${esc(s.errorMsg || "")}</div>` : ""}
+            </td>
+            <td class="actions-cell">
+              ${s.status === "error" ? `<button type="button" class="btn btn-secondary btn-sm" onclick="syncPendingSales()">Réessayer</button>` : ""}
+              <button type="button" class="btn-icon" title="Annuler cette vente" onclick="cancelPendingSale('${s.id}')"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
+            </td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+async function cancelPendingSale(id) {
+  const ok = await confirmDialog("Annuler cette vente en attente ? Elle ne sera jamais envoyée à Supabase.", {
+    title: "Annuler la vente",
+    confirmLabel: "Annuler la vente",
+    danger: true,
+  });
+  if (!ok) return;
+  removePendingSale(id);
+  showToast("Vente en attente annulée.", "info");
+}
+
 (async () => {
   const session = await requireAuth();
   if (!session) return;
   await loadPieces();
   await loadClientsSelect();
   loadFactures();
+  renderPendingSales();
+
+  document.addEventListener("sylla:connectivity-changed", updateOfflineFieldsVisibility);
+  document.addEventListener("sylla:pending-sales-updated", () => {
+    renderPendingSales();
+    loadFactures();
+  });
 })();
 </script>
 </body>

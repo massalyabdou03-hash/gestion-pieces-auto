@@ -72,6 +72,12 @@ body::before{
 ::-webkit-scrollbar-thumb{ background: var(--surface-3); border-radius:10px; border:2px solid var(--bg); }
 ::-webkit-scrollbar-thumb:hover{ background: var(--border); }
 
+/* ---------- bandeau connectivité ---------- */
+.offline-banner{ display:none; text-align:center; padding:9px 16px; font-size:0.85rem; font-weight:600; }
+.offline-banner.show{ display:block; }
+.offline-banner-off{ background:var(--danger-dim); color:var(--danger); }
+.offline-banner-on{ background:var(--success-dim); color:var(--success); }
+
 /* ---------- layout ---------- */
 .app{display:flex; min-height:100vh;}
 
