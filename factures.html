@@ -32,10 +32,14 @@
     <div class="card" id="new-facture-card" style="display:none;">
       <h3>Nouvelle facture (brouillon)</h3>
       <label>Client *</label>
-      <div class="input-with-action">
+      <div class="input-with-action" id="client-select-row">
         <select id="client_id" required onchange="updateOfflineFieldsVisibility()"><option value="">Sélectionner un client...</option></select>
         <button type="button" class="btn btn-secondary btn-sm" onclick="openQuickClient()">+ Nouveau</button>
       </div>
+      <label style="display:flex; align-items:center; gap:8px; margin-top:10px; cursor:pointer;">
+        <input type="checkbox" id="vente-comptoir-check" style="width:auto; margin:0;" onchange="toggleVenteComptoir()">
+        <span class="hint" style="margin:0;">Vente comptoir — client de passage, sans nom ni coordonnées</span>
+      </label>
 
       <table style="margin-top:16px;">
         <thead><tr><th>Pièce</th><th style="width:90px;">Qté</th><th style="width:120px;">Prix unit.</th><th style="width:110px;">Montant</th><th></th></tr></thead>
@@ -135,6 +139,7 @@ function toggleNewForm() {
 // utilisé quand on arrive depuis le Catalogue via "Facturer cette pièce" (?piece_id=...).
 function openNewFormWithPiece(piece) {
   document.getElementById("new-facture-card").style.display = "block";
+  resetClientSelection();
   document.getElementById("lignes-body").innerHTML = "";
   ligneWidgets = {};
   addLigne();
@@ -220,7 +225,7 @@ async function saveFacture() {
   clearMsg(msgEl);
 
   const clientIdRaw = document.getElementById("client_id").value;
-  if (!clientIdRaw) { showMsg(msgEl, "Sélectionne un client."); return; }
+  if (!clientIdRaw) { showMsg(msgEl, "Sélectionne un client, ou coche \"Vente comptoir\"."); return; }
 
   const lignes = [];
   document.querySelectorAll("#lignes-body tr").forEach(tr => {
@@ -255,7 +260,7 @@ async function saveFacture() {
     document.getElementById("lignes-body").innerHTML = "";
     ligneWidgets = {};
     document.getElementById("total-facture").textContent = fmtMoney(0);
-    document.getElementById("client_id").value = "";
+    resetClientSelection();
     renderPendingSales();
     if (appIsOnline) syncPendingSales();
     return;
@@ -306,6 +311,52 @@ async function loadClientsSelect() {
     opt.value = c.id; opt.textContent = c.nom;
     sel.appendChild(opt);
   });
+  await ensureClientDePassage(clients);
+}
+
+// Certaines ventes se font sans relever l'identité du client (vente comptoir). Plutôt que
+// de rendre client_id optionnel en base (et de gérer un cas "sans client" partout), on
+// réutilise un client générique unique "Client de passage", créé une seule fois puis
+// retrouvé ensuite comme n'importe quel autre client — aucune autre règle à changer.
+let clientDePassageId = null;
+
+async function ensureClientDePassage(clients) {
+  const existing = clients.find(c => c.nom === "Client de passage");
+  if (existing) { clientDePassageId = existing.id; return; }
+  if (!appIsOnline) return; // sera créé à la prochaine visite en ligne
+
+  const { data, error } = await supabaseClient.from("clients").insert({ nom: "Client de passage" }).select().single();
+  if (!error && data) {
+    clientDePassageId = data.id;
+    const opt = document.createElement("option");
+    opt.value = data.id; opt.textContent = data.nom;
+    document.getElementById("client_id").appendChild(opt);
+    // Met aussi à jour le cache local tout de suite, sinon ce client resterait absent
+    // hors ligne tant que la page n'a pas été rechargée une fois en ligne.
+    cacheClientsLocally(clients.concat(data));
+  }
+}
+
+function resetClientSelection() {
+  document.getElementById("vente-comptoir-check").checked = false;
+  document.getElementById("client-select-row").style.display = "flex";
+  document.getElementById("client_id").value = "";
+}
+
+function toggleVenteComptoir() {
+  const checked = document.getElementById("vente-comptoir-check").checked;
+  const row = document.getElementById("client-select-row");
+  const sel = document.getElementById("client_id");
+
+  if (checked && !clientDePassageId) {
+    showToast("Le client \"comptoir\" n'a pas pu être préparé (connexion requise la première fois). Réessaie une fois en ligne.", "error");
+    document.getElementById("vente-comptoir-check").checked = false;
+    return;
+  }
+
+  row.style.display = checked ? "none" : "flex";
+  sel.value = checked ? String(clientDePassageId) : "";
+  updateOfflineFieldsVisibility();
 }
 
 function openQuickClient() {
