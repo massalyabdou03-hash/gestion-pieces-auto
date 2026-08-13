@@ -131,6 +131,23 @@ function toggleNewForm() {
   }
 }
 
+// Ouvre le formulaire de nouvelle facture avec une pièce déjà ajoutée en première ligne —
+// utilisé quand on arrive depuis le Catalogue via "Facturer cette pièce" (?piece_id=...).
+function openNewFormWithPiece(piece) {
+  document.getElementById("new-facture-card").style.display = "block";
+  document.getElementById("lignes-body").innerHTML = "";
+  ligneWidgets = {};
+  addLigne();
+  const rowId = ligneCounter;
+  const tr = document.getElementById(`ligne-${rowId}`);
+  ligneWidgets[rowId].setSelected(piece);
+  tr.querySelector(".ligne-prix").value = piece.prix_vente;
+  recalcLigne(rowId);
+  updateOfflineFieldsVisibility();
+  tr.querySelector(".ligne-qte").focus();
+  tr.querySelector(".ligne-qte").select();
+}
+
 function updateOfflineFieldsVisibility() {
   // Un client créé hors ligne doit passer par la file d'attente même si la connexion
   // est revenue entre-temps (il n'a pas encore de vrai id Supabase).
@@ -428,6 +445,19 @@ async function cancelPendingSale(id) {
   await loadClientsSelect();
   loadFactures();
   renderPendingSales();
+
+  // Arrivée depuis le Catalogue via "Facturer cette pièce" : ouvre directement une
+  // facture avec la pièce déjà en première ligne, sans avoir à la rechercher deux fois.
+  const preselectPieceId = new URLSearchParams(window.location.search).get("piece_id");
+  if (preselectPieceId) {
+    const piece = piecesList.find(p => String(p.id) === preselectPieceId);
+    if (piece) {
+      openNewFormWithPiece(piece);
+    } else {
+      showToast("Cette pièce est introuvable dans le catalogue.", "error");
+    }
+    window.history.replaceState({}, "", "factures.html");
+  }
 
   document.addEventListener("sylla:connectivity-changed", updateOfflineFieldsVisibility);
   document.addEventListener("sylla:pending-sales-updated", () => {
