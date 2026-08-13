@@ -237,7 +237,10 @@ function renderTable(pieces) {
       <tbody>
         ${pieces.map(p => `
           <tr style="cursor:pointer;" onclick="openDetailModal(${p.id})">
-            <td><div class="ref">${esc(p.reference_oem)}</div>${sameRef(p.reference_oem, p.reference_interne) ? "" : `<div class="hint">${esc(p.reference_interne)}</div>`}</td>
+            <td style="overflow:hidden;">
+              <div class="ref" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(p.reference_oem)}">${esc(p.reference_oem)}</div>
+              ${sameRef(p.reference_oem, p.reference_interne) ? "" : `<div class="hint" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(p.reference_interne)}">${esc(p.reference_interne)}</div>`}
+            </td>
             <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(p.designation)}</td>
             <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(p.description || "")}">${esc(p.description || "—")}</td>
             <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(p.informations_complementaires || "")}">${esc(p.informations_complementaires || "—")}</td>
