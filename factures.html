@@ -478,6 +478,7 @@ async function loadFactures() {
   const { items, offline, savedAt } = await loadWithCache("factures", () =>
     supabaseClient
       .from("factures").select("id, numero_facture, statut, montant_total, mode_paiement, created_at, clients(nom)")
+      .neq("statut", "ANNULEE")
       .order("created_at", { ascending: false }).limit(100)
   );
 
