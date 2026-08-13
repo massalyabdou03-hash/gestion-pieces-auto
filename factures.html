@@ -154,7 +154,7 @@ function addLigne() {
       <select class="ligne-piece" onchange="onPieceChange(${id})">
         <option value="">Sélectionner...</option>
         ${piecesList.map(p => {
-          const disponible = p.quantite_stock - getReservedQuantity(p.id);
+          const disponible = computeEffectiveStock(p.id, p.quantite_stock);
           return `<option value="${p.id}" data-prix="${p.prix_vente}" data-stock="${disponible}">${esc(p.designation)} (stock: ${disponible})</option>`;
         }).join("")}
       </select>
@@ -271,17 +271,11 @@ async function saveFacture() {
 }
 
 async function loadPieces() {
-  const { data, error } = await fetchAllRows(() =>
-    supabaseClient.from("pieces").select("id, designation, prix_vente, quantite_stock").eq("actif", true).order("designation").order("id")
+  const { items, offline, savedAt } = await loadWithCache("pieces", () =>
+    fetchAllRows(() => supabaseClient.from("pieces").select("*").eq("actif", true).order("designation").order("id"))
   );
-  if (!error && data) {
-    piecesList = data;
-    cachePiecesLocally(data);
-  } else {
-    const cached = getCachedPieces();
-    piecesList = cached.items;
-    if (cached.savedAt) showToast(`Catalogue hors ligne : données du ${fmtDateTime(cached.savedAt)}.`, "info");
-  }
+  piecesList = items;
+  if (offline && savedAt) showToast(`Catalogue hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
 }
 
 async function loadClientsSelect() {
@@ -357,12 +351,14 @@ document.getElementById("quick-client-form").addEventListener("submit", async (e
 
 async function loadFactures() {
   const el = document.getElementById("table-content");
-  const { data, error } = await supabaseClient
-    .from("factures").select("id, numero_facture, statut, montant_total, mode_paiement, created_at, clients(nom)")
-    .order("created_at", { ascending: false }).limit(100);
+  const { items, offline, savedAt } = await loadWithCache("factures", () =>
+    supabaseClient
+      .from("factures").select("id, numero_facture, statut, montant_total, mode_paiement, created_at, clients(nom)")
+      .order("created_at", { ascending: false }).limit(100)
+  );
 
-  if (error) { el.innerHTML = `<div class="error-msg">${esc(friendlyError(error))}</div>`; return; }
-  if (!data || data.length === 0) { el.innerHTML = `<div class="empty-state">Aucune facture pour le moment.</div>`; return; }
+  if (offline && savedAt) showToast(`Historique hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
+  if (items.length === 0) { el.innerHTML = `<div class="empty-state">Aucune facture pour le moment.</div>`; return; }
 
   const badgeClass = { BROUILLON: "badge-muted", VALIDEE: "badge-success", ANNULEE: "badge-danger" };
 
@@ -370,7 +366,7 @@ async function loadFactures() {
     <table>
       <thead><tr><th>N° facture</th><th>Client</th><th>Statut</th><th class="num">Montant</th><th>Date</th></tr></thead>
       <tbody>
-        ${data.map(f => `
+        ${items.map(f => `
           <tr style="cursor:pointer;" onclick="window.location.href='facture-detail.html?id=${f.id}'">
             <td class="ref">${esc(f.numero_facture || "brouillon-" + f.id)}</td>
             <td>${esc(f.clients?.nom || "—")}</td>

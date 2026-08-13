@@ -55,22 +55,33 @@
 <script src="assets/app.js"></script>
 <script>
 let currentFilter = "impayes";
+let allCredits = [];
 
 function setFilter(filter) {
   currentFilter = filter;
   ["impayes", "retard", "tous"].forEach(f => {
     document.getElementById(`tab-${f}`).className = f === filter ? "btn btn-sm" : "btn btn-secondary btn-sm";
   });
-  loadEmprunts();
+  renderEmprunts();
 }
 
-async function loadStats() {
-  const { data } = await supabaseClient
-    .from("factures")
-    .select("montant_total, date_echeance")
-    .eq("mode_paiement", "CREDIT").eq("statut", "VALIDEE").eq("paye", false);
+// Une seule requête large (tous les bons à crédit validés), mise en cache pour l'usage
+// hors ligne ; les onglets "Non payés"/"En retard"/"Tous" filtrent ensuite en local,
+// ce qui permet de changer d'onglet sans connexion.
+async function loadCreditsData() {
+  const { items, offline, savedAt } = await loadWithCache("credits", () =>
+    supabaseClient
+      .from("factures")
+      .select("id, numero_facture, montant_total, created_at, echeance_type, date_echeance, paye, paye_at, clients(nom, telephone)")
+      .eq("mode_paiement", "CREDIT").eq("statut", "VALIDEE")
+      .order("date_echeance", { ascending: true })
+  );
+  allCredits = applyPendingFieldUpdates("factures", items);
+  if (offline && savedAt) showToast(`Emprunts hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
+}
 
-  const rows = data || [];
+function loadStats() {
+  const rows = allCredits.filter(f => !f.paye);
   const total = rows.reduce((s, f) => s + Number(f.montant_total), 0);
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -89,24 +100,15 @@ async function loadStats() {
   document.getElementById("stat-semaine").textContent = semaine;
 }
 
-async function loadEmprunts() {
+function renderEmprunts() {
   const el = document.getElementById("table-content");
-  el.innerHTML = "Chargement...";
-
-  let query = supabaseClient
-    .from("factures")
-    .select("id, numero_facture, montant_total, created_at, echeance_type, date_echeance, paye, paye_at, clients(nom, telephone)")
-    .eq("mode_paiement", "CREDIT").eq("statut", "VALIDEE")
-    .order("date_echeance", { ascending: true });
-
   const todayStr = new Date().toISOString().slice(0, 10);
-  if (currentFilter === "impayes") query = query.eq("paye", false);
-  if (currentFilter === "retard") query = query.eq("paye", false).lt("date_echeance", todayStr);
 
-  const { data, error } = await query;
+  let data = allCredits;
+  if (currentFilter === "impayes") data = data.filter(f => !f.paye);
+  if (currentFilter === "retard") data = data.filter(f => !f.paye && f.date_echeance && f.date_echeance < todayStr);
 
-  if (error) { el.innerHTML = `<div class="error-msg">${esc(friendlyError(error))}</div>`; return; }
-  if (!data || data.length === 0) { el.innerHTML = `<div class="empty-state">Aucun bon à afficher pour ce filtre.</div>`; return; }
+  if (data.length === 0) { el.innerHTML = `<div class="empty-state">Aucun bon à afficher pour ce filtre.</div>`; return; }
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const dansUneSemaine = new Date(today); dansUneSemaine.setDate(today.getDate() + 7);
@@ -137,7 +139,7 @@ async function loadEmprunts() {
             <td class="hint">${fmtDate(f.created_at)}</td>
             <td><span class="badge badge-muted">${f.echeance_type === "SEMAINE" ? "Sous 1 semaine" : "Sous 1 mois"}</span></td>
             <td class="hint">${fmtDate(f.date_echeance)}</td>
-            <td><span class="badge ${statutClass}">${statutLabel}</span></td>
+            <td><span class="badge ${statutClass}">${statutLabel}</span> ${f._pendingSync ? '<span class="badge badge-info">Sync en attente</span>' : ""}</td>
             <td>${f.paye ? "" : `<button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); marquerPaye(${f.id})">Marquer payé</button>`}</td>
           </tr>`;
         }).join("")}
@@ -150,20 +152,34 @@ async function marquerPaye(id) {
   const ok = await confirmDialog("Marquer ce bon comme payé ?", { confirmLabel: "Marquer payé", danger: false });
   if (!ok) return;
 
+  if (!appIsOnline) {
+    const patch = { paye: true, paye_at: new Date().toISOString() };
+    queueFieldUpdate("factures", id, patch, `Bon #${id} marqué payé`);
+    const item = allCredits.find(f => f.id === id);
+    if (item) Object.assign(item, patch, { _pendingSync: true });
+    showToast("Marqué payé hors ligne — synchronisé automatiquement au retour de la connexion.", "info");
+    loadStats();
+    renderEmprunts();
+    return;
+  }
+
   const { error } = await supabaseClient
     .from("factures").update({ paye: true, paye_at: new Date().toISOString() }).eq("id", id);
 
   if (error) { showToast(friendlyError(error), "error"); return; }
   showToast("Bon marqué comme payé.", "success");
+  await loadCreditsData();
   loadStats();
-  loadEmprunts();
+  renderEmprunts();
 }
 
 (async () => {
   const session = await requireAuth();
   if (!session) return;
+  await loadCreditsData();
   loadStats();
-  loadEmprunts();
+  renderEmprunts();
+  document.addEventListener("sylla:pending-updates-updated", async () => { await loadCreditsData(); loadStats(); renderEmprunts(); });
 })();
 </script>
 </body>

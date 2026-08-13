@@ -50,12 +50,13 @@
 let rupturePieces = [];
 
 async function loadRuptures() {
-  const el = document.getElementById("table-content");
-  const { data, error } = await fetchAllRows(() =>
-    supabaseClient.from("pieces").select("*").eq("actif", true).eq("quantite_stock", 0).order("designation").order("id")
+  // Dérivé du même cache partagé "pieces" que les autres pages : fonctionne aussi hors
+  // ligne (avec le dernier catalogue connu), sans requête réseau dédiée.
+  const { items, offline, savedAt } = await loadWithCache("pieces", () =>
+    fetchAllRows(() => supabaseClient.from("pieces").select("*").eq("actif", true).order("designation").order("id"))
   );
-  if (error) { el.innerHTML = `<div class="error-msg">${esc(friendlyError(error))}</div>`; return; }
-  rupturePieces = data || [];
+  if (offline && savedAt) showToast(`Catalogue hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
+  rupturePieces = items.filter(p => p.quantite_stock === 0);
   renderTable(rupturePieces);
 }
 

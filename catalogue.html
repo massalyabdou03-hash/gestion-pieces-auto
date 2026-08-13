@@ -29,8 +29,8 @@
         <div class="subtitle">Pièces référencées et niveaux de stock</div>
       </div>
       <div class="topbar-actions">
-        <button class="btn btn-secondary" onclick="openImportModal()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>Importer un catalogue</button>
-        <button class="btn" onclick="openModal()">+ Nouvelle pièce</button>
+        <button class="btn btn-secondary catalogue-write-action" onclick="openImportModal()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>Importer un catalogue</button>
+        <button class="btn catalogue-write-action" onclick="openModal()">+ Nouvelle pièce</button>
       </div>
     </div>
 
@@ -186,13 +186,33 @@ function generateReferenceInterne(referenceOem, excludeId = null) {
 }
 
 async function loadPieces() {
-  const { data, error } = await fetchAllRows(() =>
-    supabaseClient.from("pieces").select("*").eq("actif", true).order("designation").order("id")
+  const { items, offline, savedAt } = await loadWithCache("pieces", () =>
+    fetchAllRows(() => supabaseClient.from("pieces").select("*").eq("actif", true).order("designation").order("id"))
   );
-  const el = document.getElementById("table-content");
-  if (error) { el.innerHTML = `<div class="error-msg">${esc(friendlyError(error))}</div>`; return; }
-  allPieces = data || [];
+  allPieces = items;
+  if (offline && savedAt) showToast(`Catalogue hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
   renderTable(allPieces);
+}
+
+// Créer/modifier/supprimer une pièce ou importer un catalogue implique des règles
+// gérées côté serveur (unicité, génération de numéros...) qu'on ne peut pas rejouer
+// fiablement hors ligne : ces actions restent désactivées tant que la connexion n'est
+// pas revenue. La lecture du catalogue, elle, reste toujours possible (cache local).
+function updateWriteActionsAvailability() {
+  const disabled = !appIsOnline;
+  document.querySelectorAll(".catalogue-write-action").forEach(btn => btn.disabled = disabled);
+  document.querySelectorAll(".catalogue-write-action").forEach(btn => btn.title = disabled ? "Connexion requise pour modifier le catalogue." : "");
+}
+
+// La référence interne est souvent générée automatiquement à partir de la référence OEM
+// (import, création rapide) : quand les deux ne diffèrent que par la casse/ponctuation,
+// les afficher l'une sous l'autre dans le tableau donne l'impression d'un doublon. On ne
+// montre la référence interne que si elle apporte une information réellement différente.
+function normalizeRef(s) {
+  return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function sameRef(a, b) {
+  return normalizeRef(a) === normalizeRef(b);
 }
 
 function renderTable(pieces) {
@@ -215,7 +235,7 @@ function renderTable(pieces) {
       <tbody>
         ${pieces.map(p => `
           <tr style="cursor:pointer;" onclick="openDetailModal(${p.id})">
-            <td><div class="ref">${esc(p.reference_oem)}</div><div class="hint">${esc(p.reference_interne)}</div></td>
+            <td><div class="ref">${esc(p.reference_oem)}</div>${sameRef(p.reference_oem, p.reference_interne) ? "" : `<div class="hint">${esc(p.reference_interne)}</div>`}</td>
             <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(p.designation)}</td>
             <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(p.description || "")}">${esc(p.description || "—")}</td>
             <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(p.informations_complementaires || "")}">${esc(p.informations_complementaires || "—")}</td>
@@ -224,13 +244,14 @@ function renderTable(pieces) {
             <td class="num">${fmtMoney(p.prix_vente)}</td>
             <td class="num"><span class="badge ${p.quantite_stock <= p.seuil_alerte ? (p.quantite_stock === 0 ? "badge-danger" : "badge-warn") : "badge-success"}">${p.quantite_stock}</span></td>
             <td class="actions-cell">
-              <button class="btn-icon" title="Modifier" onclick="event.stopPropagation(); editPiece(${p.id})"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
-              <button class="btn-icon" title="Supprimer" onclick="event.stopPropagation(); deletePiece(${p.id})"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
+              <button class="btn-icon catalogue-write-action" title="Modifier" onclick="event.stopPropagation(); editPiece(${p.id})"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+              <button class="btn-icon catalogue-write-action" title="Supprimer" onclick="event.stopPropagation(); deletePiece(${p.id})"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
             </td>
           </tr>`).join("")}
       </tbody>
     </table>
     </div>`;
+  updateWriteActionsAvailability();
 }
 
 document.getElementById("search").addEventListener("input", (e) => {
@@ -246,6 +267,7 @@ document.getElementById("search").addEventListener("input", (e) => {
 });
 
 function openModal() {
+  if (!appIsOnline) { showToast("Connexion requise pour modifier le catalogue.", "error"); return; }
   document.getElementById("piece-form").reset();
   document.getElementById("piece-id").value = "";
   document.getElementById("modal-title").textContent = "Nouvelle pièce";
@@ -256,6 +278,7 @@ function openModal() {
 }
 
 function editPiece(id) {
+  if (!appIsOnline) { showToast("Connexion requise pour modifier le catalogue.", "error"); return; }
   const p = allPieces.find(x => x.id === id);
   if (!p) return;
   document.getElementById("piece-id").value = p.id;
@@ -319,6 +342,7 @@ function closeDetailModal() {
 }
 
 async function deletePiece(id) {
+  if (!appIsOnline) { showToast("Connexion requise pour modifier le catalogue.", "error"); return; }
   const p = allPieces.find(x => x.id === id);
   const ok = await confirmDialog(`Supprimer "${p.designation}" ? Cette action masque la pièce du catalogue.`, {
     title: "Supprimer la pièce",
@@ -392,13 +416,15 @@ const IMPORT_FIELDS = [
   { key: "prix_vente",        label: "Prix de vente",        required: false, numeric: true },
   { key: "quantite_stock",    label: "Stock actuel",         required: false, numeric: true },
   { key: "seuil_alerte",      label: "Seuil d'alerte",       required: false, numeric: true },
+  { key: "description",       label: "Description",          required: false, numeric: false },
+  { key: "informations_complementaires", label: "Informations complémentaires", required: false, numeric: false },
 ];
 
 // Mots-clés utilisés pour deviner automatiquement quelle colonne du fichier correspond à quel champ.
 const IMPORT_KEYWORDS = {
   reference_oem:     ["referenceoem", "refoem", "oem", "reference", "ref", "codeoem"],
   reference_interne: ["referenceinterne", "refinterne", "sku", "codeinterne", "codearticle", "codeproduit", "referencemagasin"],
-  designation:       ["designation", "description", "libelle", "nom", "article", "produit", "intitule"],
+  designation:       ["designation", "libelle", "nom", "article", "produit", "intitule"],
   marque:            ["marque", "brand", "fabricant"],
   categorie:         ["categorie", "famille", "type", "rayon"],
   emplacement:       ["emplacement", "localisation", "position", "casier"],
@@ -407,6 +433,8 @@ const IMPORT_KEYWORDS = {
   prix_vente:        ["prixvente", "prixdevente", "vente", "prixpublic", "pv", "prix", "tarif"],
   quantite_stock:    ["stock", "quantite", "qte", "quantitestock", "qtestock", "quantiteenstock"],
   seuil_alerte:      ["seuil", "seuilalerte", "alerte", "stockmin", "stockminimum", "reappro"],
+  description:       ["description", "compatibilite", "compatibilites", "notes", "remarque", "remarques", "etat"],
+  informations_complementaires: ["informationscomplementaires", "infoscomplementaires", "informations", "infos", "referencesequivalentes", "refequivalentes", "equivalences", "complement", "complements"],
 };
 
 let importState = {
@@ -425,6 +453,7 @@ function normalizeHeader(str) {
 }
 
 function openImportModal() {
+  if (!appIsOnline) { showToast("Connexion requise pour importer un catalogue.", "error"); return; }
   importState = { headers: [], rows: [], mapping: {}, validRows: [], invalidRows: [] };
   document.getElementById("import-file-input").value = "";
   clearMsg(document.getElementById("import-file-msg"));
@@ -635,6 +664,8 @@ function buildPreview() {
       prix_vente: getNum("prix_vente", 0),
       quantite_stock: Math.round(getNum("quantite_stock", 0)),
       seuil_alerte: Math.round(getNum("seuil_alerte", 1)),
+      description: get("description") || null,
+      informations_complementaires: get("informations_complementaires") || null,
       actif: true,
       _code_barre_doublon: code_barre_doublon,
     });
@@ -728,6 +759,7 @@ async function runImport() {
   const session = await requireAuth();
   if (!session) return;
   loadPieces();
+  document.addEventListener("sylla:connectivity-changed", updateWriteActionsAvailability);
 })();
 </script>
 </body>

@@ -55,35 +55,42 @@
   const session = await requireAuth();
   if (!session) return;
 
-  // Stat: nombre de pièces actives + valeur stock (achat)
-  const { data: pieces, error: errPieces } = await fetchAllRows(() =>
-    supabaseClient.from("pieces").select("id, quantite_stock, prix_achat").eq("actif", true).order("id")
+  // Stat: nombre de pièces actives + valeur stock (achat) — avec repli sur le cache
+  // local si hors ligne (dernier catalogue connu, éventuellement pas à jour).
+  const { items: pieces, offline: piecesOffline, savedAt } = await loadWithCache("pieces", () =>
+    fetchAllRows(() => supabaseClient.from("pieces").select("*").eq("actif", true).order("id"))
   );
-
-  if (!errPieces && pieces) {
-    document.getElementById("stat-pieces").textContent = pieces.length;
-    const valeur = pieces.reduce((sum, p) => sum + (p.quantite_stock * Number(p.prix_achat)), 0);
-    document.getElementById("stat-valeur").textContent = fmtMoney(valeur);
+  if (piecesOffline && savedAt) {
+    showToast(`Hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
   }
+
+  document.getElementById("stat-pieces").textContent = pieces.length;
+  const valeur = pieces.reduce((sum, p) => sum + (p.quantite_stock * Number(p.prix_achat)), 0);
+  document.getElementById("stat-valeur").textContent = fmtMoney(valeur);
 
   // Stat: factures validées ce mois-ci
   const debutMois = new Date(); debutMois.setDate(1); debutMois.setHours(0,0,0,0);
-  const { data: factures } = await supabaseClient
-    .from("factures").select("id").eq("statut", "VALIDEE").gte("validated_at", debutMois.toISOString());
-  document.getElementById("stat-factures").textContent = factures ? factures.length : "0";
-
-  // Alertes stock
-  const { data: alertes, error: errAlertes } = await supabaseClient
-    .from("vue_alertes_stock").select("*").limit(50);
-
-  const alertesEl = document.getElementById("alertes-content");
-  document.getElementById("stat-alertes").textContent = alertes ? alertes.length : "0";
-
-  if (errAlertes) {
-    alertesEl.innerHTML = `<div class="error-msg">${esc(friendlyError(errAlertes))}</div>`;
-    return;
+  try {
+    const { data: factures, error } = await supabaseClient
+      .from("factures").select("id").eq("statut", "VALIDEE").gte("validated_at", debutMois.toISOString());
+    if (error) throw error;
+    document.getElementById("stat-factures").textContent = factures ? factures.length : "0";
+  } catch {
+    // Hors ligne : on ne peut compter que ce qu'on a déjà vu passer sur la page Factures.
+    const cachedFactures = getCachedCollection("factures").items;
+    const count = cachedFactures.filter(f => f.statut === "VALIDEE" && f.created_at && new Date(f.created_at) >= debutMois).length;
+    document.getElementById("stat-factures").textContent = cachedFactures.length ? count : "—";
   }
-  if (!alertes || alertes.length === 0) {
+
+  // Alertes stock — dérivées directement du catalogue (en ligne comme hors ligne),
+  // pour ne pas dépendre d'une deuxième requête réseau qui échouerait hors connexion.
+  const alertesEl = document.getElementById("alertes-content");
+  const alertes = pieces
+    .filter(p => p.quantite_stock <= p.seuil_alerte)
+    .sort((a, b) => a.quantite_stock - b.quantite_stock);
+  document.getElementById("stat-alertes").textContent = alertes.length;
+
+  if (alertes.length === 0) {
     alertesEl.innerHTML = `<div class="empty-state">Aucune alerte — tout le stock est au-dessus du seuil.</div>`;
     return;
   }
@@ -91,7 +98,7 @@
     <table>
       <thead><tr><th>Référence OEM</th><th>Désignation</th><th>Marque</th><th>Emplacement</th><th class="num">Stock</th><th class="num">Seuil</th></tr></thead>
       <tbody>
-        ${alertes.map(a => `
+        ${alertes.slice(0, 50).map(a => `
           <tr>
             <td class="ref">${esc(a.reference_oem)}</td>
             <td>${esc(a.designation)}</td>

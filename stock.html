@@ -77,16 +77,16 @@
 let piecesMap = {};
 
 async function loadPiecesSelect() {
-  const { data, error } = await fetchAllRows(() =>
-    supabaseClient.from("pieces").select("id, designation, reference_interne, quantite_stock").eq("actif", true).order("designation").order("id")
+  const { items, offline, savedAt } = await loadWithCache("pieces", () =>
+    fetchAllRows(() => supabaseClient.from("pieces").select("*").eq("actif", true).order("designation").order("id"))
   );
-  if (error) return;
+  if (offline && savedAt) showToast(`Catalogue hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
   const sel = document.getElementById("piece_id");
-  data.forEach(p => {
+  items.forEach(p => {
     piecesMap[p.id] = p;
     const opt = document.createElement("option");
     opt.value = p.id;
-    opt.textContent = `${p.designation} (${p.reference_interne}) — stock: ${p.quantite_stock}`;
+    opt.textContent = `${p.designation} (${p.reference_interne}) — stock: ${computeEffectiveStock(p.id, p.quantite_stock)}`;
     sel.appendChild(opt);
   });
 }
@@ -100,7 +100,10 @@ function updateHint() {
   qtyLabel.textContent = type === "AJUSTEMENT" ? "Nouvelle quantité réelle (comptée) *" : "Quantité *";
 
   if (pieceId && piecesMap[pieceId]) {
-    hint.textContent = `Stock actuel enregistré : ${piecesMap[pieceId].quantite_stock}`;
+    const effectif = computeEffectiveStock(pieceId, piecesMap[pieceId].quantite_stock);
+    hint.textContent = appIsOnline
+      ? `Stock actuel enregistré : ${piecesMap[pieceId].quantite_stock}`
+      : `Stock estimé (avec mouvements en attente) : ${effectif}`;
   } else {
     hint.textContent = "";
   }
@@ -108,16 +111,49 @@ function updateHint() {
 document.getElementById("piece_id").addEventListener("change", updateHint);
 document.getElementById("type_mouvement").addEventListener("change", updateHint);
 
+function renderPendingMovementRow(m) {
+  const badgeClass = { ENTREE: "badge-success", SORTIE: "badge-danger", AJUSTEMENT: "badge-warn" };
+  const label = { ENTREE: "Entrée", SORTIE: "Sortie", AJUSTEMENT: "Ajustement" };
+  const statusBadge = {
+    pending: '<span class="badge badge-info">En attente</span>',
+    syncing: '<span class="badge badge-info">Synchronisation...</span>',
+    error: '<span class="badge badge-danger">Erreur</span>',
+  };
+  return `
+    <tr>
+      <td class="hint">${fmtDateTime(m.createdAt)}</td>
+      <td>${esc(m.piece_designation || "—")}</td>
+      <td><span class="badge ${badgeClass[m.type_mouvement]}">${label[m.type_mouvement]}</span></td>
+      <td class="num hint">—</td>
+      <td class="num hint">—</td>
+      <td class="hint">
+        ${esc(m.motif || "—")}
+        ${statusBadge[m.status] || ""}
+        ${m.status === "error" ? `<div style="color:var(--danger);">${esc(m.errorMsg || "")}</div>` : ""}
+      </td>
+    </tr>`;
+}
+
 async function loadHistorique() {
   const el = document.getElementById("historique-content");
-  const { data, error } = await supabaseClient
-    .from("mouvements_stock")
-    .select("id, type_mouvement, quantite, quantite_avant, quantite_apres, motif, created_at, pieces(designation, reference_interne)")
-    .order("created_at", { ascending: false })
-    .limit(40);
+  const { items, offline, savedAt } = await loadWithCache("mouvements", () =>
+    supabaseClient
+      .from("mouvements_stock")
+      .select("id, type_mouvement, quantite, quantite_avant, quantite_apres, motif, created_at, pieces(designation, reference_interne)")
+      .order("created_at", { ascending: false })
+      .limit(40)
+  );
 
-  if (error) { el.innerHTML = `<div class="error-msg">${esc(friendlyError(error))}</div>`; return; }
-  if (!data || data.length === 0) { el.innerHTML = `<div class="empty-state">Aucun mouvement enregistré pour le moment.</div>`; return; }
+  const pending = getPendingMovements()
+    .filter(m => m.status !== "done")
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  if (offline && savedAt) showToast(`Historique hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
+
+  if (items.length === 0 && pending.length === 0) {
+    el.innerHTML = `<div class="empty-state">Aucun mouvement enregistré pour le moment.</div>`;
+    return;
+  }
 
   const badgeClass = { ENTREE: "badge-success", SORTIE: "badge-danger", AJUSTEMENT: "badge-warn" };
   const label = { ENTREE: "Entrée", SORTIE: "Sortie", AJUSTEMENT: "Ajustement" };
@@ -126,7 +162,8 @@ async function loadHistorique() {
     <table>
       <thead><tr><th>Date</th><th>Pièce</th><th>Type</th><th class="num">Avant</th><th class="num">Après</th><th>Motif</th></tr></thead>
       <tbody>
-        ${data.map(m => `
+        ${pending.map(renderPendingMovementRow).join("")}
+        ${items.map(m => `
           <tr>
             <td class="hint">${fmtDateTime(m.created_at)}</td>
             <td>${esc(m.pieces?.designation || "—")}</td>
@@ -146,11 +183,30 @@ document.getElementById("mvt-form").addEventListener("submit", async (e) => {
   const btn = document.getElementById("submit-btn");
   btn.disabled = true; btn.textContent = "Enregistrement...";
 
+  const pieceId = Number(document.getElementById("piece_id").value);
+  const payload = {
+    piece_id: pieceId,
+    piece_designation: piecesMap[pieceId]?.designation || "",
+    type_mouvement: document.getElementById("type_mouvement").value,
+    quantite: Number(document.getElementById("quantite").value),
+    motif: document.getElementById("motif").value.trim() || null,
+  };
+
+  if (!appIsOnline) {
+    queuePendingMovement(payload);
+    btn.disabled = false; btn.textContent = "Enregistrer le mouvement";
+    showToast("Mouvement enregistré hors ligne — il sera synchronisé automatiquement au retour de la connexion.", "info");
+    document.getElementById("mvt-form").reset();
+    updateHint();
+    loadHistorique();
+    return;
+  }
+
   const { error } = await supabaseClient.rpc("enregistrer_mouvement_stock", {
-    p_piece_id: Number(document.getElementById("piece_id").value),
-    p_type: document.getElementById("type_mouvement").value,
-    p_quantite: Number(document.getElementById("quantite").value),
-    p_motif: document.getElementById("motif").value.trim() || null,
+    p_piece_id: payload.piece_id,
+    p_type: payload.type_mouvement,
+    p_quantite: payload.quantite,
+    p_motif: payload.motif,
   });
 
   btn.disabled = false; btn.textContent = "Enregistrer le mouvement";
@@ -170,6 +226,7 @@ document.getElementById("mvt-form").addEventListener("submit", async (e) => {
   if (!session) return;
   await loadPiecesSelect();
   loadHistorique();
+  document.addEventListener("sylla:pending-movements-updated", loadHistorique);
 })();
 </script>
 </body>

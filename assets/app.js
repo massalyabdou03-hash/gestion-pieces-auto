@@ -1,3 +1,12 @@
+// Enregistre le Service Worker qui met l'application en cache (pages, styles, scripts) :
+// c'est ce qui permet d'ouvrir l'app sans aucune connexion, même après avoir redémarré
+// l'ordinateur. Le cache vit sur le disque, dans le profil du navigateur.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch((err) => console.error("Échec de l'enregistrement du Service Worker", err));
+  });
+}
+
 // Redirige vers login.html si aucune session active. A appeler en haut de chaque page protégée.
 async function requireAuth() {
   const { data } = await supabaseClient.auth.getSession();
@@ -163,8 +172,17 @@ function codeToEmail(code) {
 
 // =============================================================================
 // MODE HORS CONNEXION — cache local (catalogue/clients) + ventes en différé
-// La boutique n'a qu'un seul poste : pas besoin de résoudre des conflits entre
-// plusieurs appareils, juste de rejouer les ventes dans l'ordre au retour du réseau.
+// Chaque poste (ordinateur/navigateur) a sa propre file d'attente locale, sans savoir
+// ce que fait l'autre poste pendant qu'il est aussi hors ligne. On ne fait donc pas de
+// vraie résolution de conflits multi-appareils ici : on rejoue simplement, sur chaque
+// poste, ses propres actions dans l'ordre au retour du réseau. Conséquences si les DEUX
+// postes sont hors ligne en même temps sur la même pièce :
+// - Ventes / mouvements ENTREE-SORTIE : sans risque de corruption — le stock réel est
+//   toujours recalculé côté serveur au moment de la synchro, donc une vente en trop
+//   échoue proprement ("Stock insuffisant", visible et à réessayer), rien n'est perdu.
+// - Ajustements d'inventaire (AJUSTEMENT, quantité absolue) : c'est le seul cas où le
+//   dernier poste à synchroniser écrase silencieusement le comptage de l'autre. Éviter
+//   de faire un inventaire physique sur les deux postes en même temps hors connexion.
 // =============================================================================
 
 function readLocal(key, fallback) {
@@ -195,6 +213,122 @@ function cacheClientsLocally(clients) {
 }
 function getCachedClients() {
   return readLocal("sylla_cache_clients", { savedAt: null, items: [] });
+}
+
+// Cache local générique pour toute autre liste (mouvements, factures, emprunts...).
+function cacheCollection(key, items) {
+  writeLocal(`sylla_cache_${key}`, { savedAt: new Date().toISOString(), items });
+}
+function getCachedCollection(key) {
+  return readLocal(`sylla_cache_${key}`, { savedAt: null, items: [] });
+}
+
+// Essaie une requête Supabase ; si elle échoue (hors ligne ou erreur réseau), retombe
+// sur la dernière copie locale connue. `queryFn` doit renvoyer une Promise<{data, error}>.
+async function loadWithCache(cacheKey, queryFn) {
+  try {
+    const { data, error } = await queryFn();
+    if (!error && data) {
+      cacheCollection(cacheKey, data);
+      return { items: data, offline: false, savedAt: new Date().toISOString() };
+    }
+  } catch {
+    // requête impossible (hors ligne) : on tombe sur le cache ci-dessous.
+  }
+  const cached = getCachedCollection(cacheKey);
+  return { items: cached.items, offline: true, savedAt: cached.savedAt };
+}
+
+// ---------- File d'attente générique pour de petites modifications (ex: "marquer payé")
+// faites hors ligne sur une ligne déjà existante en base. Une seule table + un seul id,
+// donc pas de risque d'écraser un travail concurrent : on rejoue simplement le PATCH.
+function getFieldUpdates() {
+  return readLocal("sylla_pending_updates", []);
+}
+function saveFieldUpdates(updates) {
+  writeLocal("sylla_pending_updates", updates);
+}
+function queueFieldUpdate(table, id, patch, label) {
+  const updates = getFieldUpdates();
+  updates.push({
+    id: `upd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    table, recordId: id, patch, label,
+    createdAt: new Date().toISOString(),
+    status: "pending",
+    errorMsg: null,
+  });
+  saveFieldUpdates(updates);
+  document.dispatchEvent(new CustomEvent("sylla:pending-updates-updated"));
+}
+function removeFieldUpdate(id) {
+  saveFieldUpdates(getFieldUpdates().filter(u => u.id !== id));
+  document.dispatchEvent(new CustomEvent("sylla:pending-updates-updated"));
+}
+
+// Superpose les modifications encore en attente de synchro sur une liste fraîchement
+// chargée (ou mise en cache), pour que l'affichage reflète immédiatement l'action de
+// l'utilisateur même si l'écriture réelle n'a pas encore atteint Supabase.
+function applyPendingFieldUpdates(table, items) {
+  const updates = getFieldUpdates().filter(u => u.table === table);
+  if (updates.length === 0) return items;
+  const byId = new Map(items.map(it => [String(it.id), it]));
+  updates.forEach(u => {
+    const it = byId.get(String(u.recordId));
+    if (it) Object.assign(it, u.patch, { _pendingSync: true });
+  });
+  return items;
+}
+
+// ---------- File d'attente des mouvements de stock faits hors ligne (entrées, sorties,
+// ajustements). Même logique que les ventes : on rejoue dans l'ordre via la RPC
+// `enregistrer_mouvement_stock`, qui recalcule le stock à partir de la valeur réelle en
+// base au moment de la synchro — donc l'ordre de rejeu suffit, pas besoin de fusion.
+function getPendingMovements() {
+  return readLocal("sylla_pending_movements", []);
+}
+function savePendingMovements(movements) {
+  writeLocal("sylla_pending_movements", movements);
+}
+function queuePendingMovement(movement) {
+  const movements = getPendingMovements();
+  const entry = {
+    id: `mvt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: new Date().toISOString(),
+    status: "pending",
+    errorMsg: null,
+    ...movement,
+  };
+  movements.push(entry);
+  savePendingMovements(movements);
+  document.dispatchEvent(new CustomEvent("sylla:pending-movements-updated"));
+  return entry;
+}
+function updatePendingMovement(id, patch) {
+  const movements = getPendingMovements();
+  const idx = movements.findIndex(m => m.id === id);
+  if (idx === -1) return;
+  movements[idx] = { ...movements[idx], ...patch };
+  savePendingMovements(movements);
+}
+function removePendingMovement(id) {
+  savePendingMovements(getPendingMovements().filter(m => m.id !== id));
+  document.dispatchEvent(new CustomEvent("sylla:pending-movements-updated"));
+}
+
+// Stock affiché hors ligne pour une pièce = stock connu (cache) + mouvements en attente
+// + réservations des ventes en attente. Purement indicatif : le stock réel et définitif
+// est toujours recalculé côté serveur au moment de la synchronisation.
+function computeEffectiveStock(pieceId, baseQuantity) {
+  let qty = baseQuantity;
+  getPendingMovements()
+    .filter(m => m.status !== "error" && m.piece_id === pieceId)
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+    .forEach(m => {
+      if (m.type_mouvement === "ENTREE") qty += m.quantite;
+      else if (m.type_mouvement === "SORTIE") qty -= m.quantite;
+      else if (m.type_mouvement === "AJUSTEMENT") qty = m.quantite;
+    });
+  return qty - getReservedQuantity(pieceId);
 }
 
 function getPendingSales() {
@@ -277,7 +411,7 @@ function setOnlineState(isOnline) {
   const banner = ensureOfflineBanner();
 
   if (!isOnline) {
-    banner.textContent = "Hors connexion — les ventes sont enregistrées localement et seront synchronisées automatiquement au retour d'internet.";
+    banner.textContent = "Hors connexion — l'application reste utilisable : les ventes, mouvements de stock et autres actions sont enregistrés localement et seront synchronisés automatiquement au retour d'internet.";
     banner.className = "offline-banner offline-banner-off show";
     if (!offlineRecheckTimer) {
       offlineRecheckTimer = setInterval(async () => {
@@ -297,10 +431,19 @@ function setOnlineState(isOnline) {
   document.dispatchEvent(new CustomEvent("sylla:connectivity-changed", { detail: { online: isOnline } }));
 }
 
+// Rejoue les trois files d'attente hors ligne, dans l'ordre où elles ont le plus de
+// chances de rester cohérentes : d'abord les mouvements de stock (souvent des réceptions
+// qui rendent une vente possible), puis les ventes, puis les petites mises à jour de champ.
+async function syncAllPending() {
+  await syncPendingMovements();
+  await syncPendingSales();
+  await syncFieldUpdates();
+}
+
 async function handleBackOnline() {
   if (offlineRecheckTimer) { clearInterval(offlineRecheckTimer); offlineRecheckTimer = null; }
   setOnlineState(true);
-  await syncPendingSales();
+  await syncAllPending();
 }
 
 function initConnectivity() {
@@ -314,7 +457,7 @@ function initConnectivity() {
 
   setOnlineState(navigator.onLine);
   if (navigator.onLine) {
-    probeOnline().then(ok => ok ? syncPendingSales() : setOnlineState(false));
+    probeOnline().then(ok => ok ? syncAllPending() : setOnlineState(false));
   }
 }
 
@@ -370,5 +513,67 @@ async function syncPendingSales() {
   } finally {
     syncInProgress = false;
     document.dispatchEvent(new CustomEvent("sylla:pending-sales-updated"));
+  }
+}
+
+// ---------- Moteur de synchronisation des mouvements de stock en attente ----------
+let movementsSyncInProgress = false;
+
+async function syncPendingMovements() {
+  if (movementsSyncInProgress) return;
+  movementsSyncInProgress = true;
+  try {
+    const movements = getPendingMovements()
+      .filter(m => m.status === "pending" || m.status === "error")
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+    for (const mvt of movements) {
+      updatePendingMovement(mvt.id, { status: "syncing", errorMsg: null });
+      try {
+        const { error } = await supabaseClient.rpc("enregistrer_mouvement_stock", {
+          p_piece_id: mvt.piece_id,
+          p_type: mvt.type_mouvement,
+          p_quantite: mvt.quantite,
+          p_motif: mvt.motif || null,
+        });
+        if (error) throw error;
+        removePendingMovement(mvt.id);
+        showToast(`Mouvement de stock (${mvt.piece_designation || "pièce"}) synchronisé.`, "success");
+      } catch (err) {
+        updatePendingMovement(mvt.id, { status: "error", errorMsg: friendlyError(err) });
+      }
+    }
+  } finally {
+    movementsSyncInProgress = false;
+    document.dispatchEvent(new CustomEvent("sylla:pending-movements-updated"));
+  }
+}
+
+// ---------- Moteur de synchronisation des petites mises à jour en attente ----------
+let fieldUpdatesSyncInProgress = false;
+
+async function syncFieldUpdates() {
+  if (fieldUpdatesSyncInProgress) return;
+  fieldUpdatesSyncInProgress = true;
+  try {
+    const updates = getFieldUpdates()
+      .filter(u => u.status === "pending" || u.status === "error")
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+    for (const upd of updates) {
+      try {
+        const { error } = await supabaseClient.from(upd.table).update(upd.patch).eq("id", upd.recordId);
+        if (error) throw error;
+        removeFieldUpdate(upd.id);
+        if (upd.label) showToast(`${upd.label} synchronisé.`, "success");
+      } catch (err) {
+        const all = getFieldUpdates();
+        const idx = all.findIndex(u => u.id === upd.id);
+        if (idx !== -1) { all[idx].status = "error"; all[idx].errorMsg = friendlyError(err); saveFieldUpdates(all); }
+      }
+    }
+  } finally {
+    fieldUpdatesSyncInProgress = false;
+    document.dispatchEvent(new CustomEvent("sylla:pending-updates-updated"));
   }
 }
