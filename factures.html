@@ -157,9 +157,15 @@ function updateOfflineFieldsVisibility() {
   // Un client créé hors ligne doit passer par la file d'attente même si la connexion
   // est revenue entre-temps (il n'a pas encore de vrai id Supabase).
   const clientId = document.getElementById("client_id").value;
-  const needsOfflineFields = !appIsOnline || clientId.startsWith("new-");
+  const isComptoir = document.getElementById("vente-comptoir-check").checked;
+  // Vente comptoir : paiement toujours espèces, jamais besoin de le demander.
+  const needsOfflineFields = !isComptoir && (!appIsOnline || clientId.startsWith("new-"));
   document.getElementById("offline-payment-fields").style.display = needsOfflineFields ? "block" : "none";
-  document.getElementById("save-facture-btn").textContent = needsOfflineFields ? "Enregistrer la vente (hors ligne)" : "Enregistrer en brouillon";
+
+  let label = "Enregistrer en brouillon";
+  if (isComptoir) label = "Valider comme vente";
+  else if (needsOfflineFields) label = "Enregistrer la vente (hors ligne)";
+  document.getElementById("save-facture-btn").textContent = label;
 }
 
 function onOfflineModePaiementChange() {
@@ -242,6 +248,53 @@ async function saveFacture() {
 
   const total = lignes.reduce((s, l) => s + l.montant, 0);
   const isDraftClient = clientIdRaw.startsWith("new-");
+  const isComptoir = document.getElementById("vente-comptoir-check").checked;
+
+  // Vente comptoir : pas de choix de mode de paiement (toujours espèces) et pas de
+  // brouillon à valider séparément sur facture-detail.html — un seul geste : pièce(s),
+  // quantité(s), et c'est déstocké. En ligne comme hors ligne.
+  if (isComptoir) {
+    if (!appIsOnline) {
+      queuePendingSale({
+        client: { mode: "existing", id: Number(clientIdRaw), nom: "Client de passage" },
+        lignes, total, mode_paiement: "ESPECES", echeance_type: null,
+      });
+      showToast("Vente enregistrée hors ligne — elle sera synchronisée automatiquement au retour de la connexion.", "info");
+      resetFactureForm();
+      renderPendingSales();
+      return;
+    }
+
+    const btn = document.getElementById("save-facture-btn");
+    btn.disabled = true; btn.textContent = "Enregistrement...";
+
+    const { data: facture, error: errFacture } = await supabaseClient
+      .from("factures").insert({ client_id: Number(clientIdRaw), montant_total: total }).select().single();
+    if (errFacture) {
+      btn.disabled = false; btn.textContent = "Valider comme vente";
+      showMsg(msgEl, friendlyError(errFacture));
+      return;
+    }
+
+    const lignesPayload = lignes.map(l => ({ ...l, facture_id: facture.id }));
+    const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
+    if (errLignes) {
+      btn.disabled = false; btn.textContent = "Valider comme vente";
+      showMsg(msgEl, friendlyError(errLignes));
+      return;
+    }
+
+    const { error: errValidation } = await supabaseClient.rpc("valider_facture", {
+      p_facture_id: facture.id, p_mode_paiement: "ESPECES", p_echeance_type: null,
+    });
+    btn.disabled = false; btn.textContent = "Valider comme vente";
+    if (errValidation) { showMsg(msgEl, friendlyError(errValidation)); return; }
+
+    showToast(`Vente enregistrée (${fmtMoney(total)}) — stock mis à jour.`, "success");
+    resetFactureForm();
+    loadFactures();
+    return;
+  }
 
   // Un client créé hors ligne n'a pas de vrai id Supabase : on passe forcément par la
   // file d'attente pour lui, même si la connexion est déjà revenue entre-temps.
@@ -256,11 +309,7 @@ async function saveFacture() {
 
     queuePendingSale({ client: clientPayload, lignes, total, mode_paiement: modePaiement, echeance_type: echeanceType });
     showToast("Vente enregistrée hors ligne — elle sera synchronisée automatiquement au retour de la connexion.", "info");
-    toggleNewForm();
-    document.getElementById("lignes-body").innerHTML = "";
-    ligneWidgets = {};
-    document.getElementById("total-facture").textContent = fmtMoney(0);
-    resetClientSelection();
+    resetFactureForm();
     renderPendingSales();
     if (appIsOnline) syncPendingSales();
     return;
@@ -341,6 +390,17 @@ function resetClientSelection() {
   document.getElementById("vente-comptoir-check").checked = false;
   document.getElementById("client-select-row").style.display = "flex";
   document.getElementById("client_id").value = "";
+}
+
+// Remet le formulaire "Nouvelle facture" à zéro et referme la carte — utilisé après
+// chaque vente enregistrée avec succès (comptoir ou normale, en ligne ou hors ligne).
+function resetFactureForm() {
+  document.getElementById("new-facture-card").style.display = "none";
+  document.getElementById("lignes-body").innerHTML = "";
+  ligneWidgets = {};
+  document.getElementById("total-facture").textContent = fmtMoney(0);
+  resetClientSelection();
+  updateOfflineFieldsVisibility();
 }
 
 function toggleVenteComptoir() {
