@@ -118,6 +118,7 @@
 <script>
 let piecesList = [];
 let ligneCounter = 0;
+let ligneWidgets = {}; // id de ligne -> instance du champ de recherche de pièce (initPieceSearch)
 let pendingNewClients = {}; // clients créés hors ligne, en attente d'un vrai id Supabase
 
 function toggleNewForm() {
@@ -152,13 +153,10 @@ function addLigne() {
   tr.id = `ligne-${id}`;
   tr.innerHTML = `
     <td>
-      <select class="ligne-piece" onchange="onPieceChange(${id})">
-        <option value="">Sélectionner...</option>
-        ${piecesList.map(p => {
-          const disponible = computeEffectiveStock(p.id, p.quantite_stock);
-          return `<option value="${p.id}" data-prix="${p.prix_vente}" data-stock="${disponible}">${esc(p.designation)} (stock: ${disponible})</option>`;
-        }).join("")}
-      </select>
+      <div class="piece-search">
+        <input type="text" class="piece-search-input" placeholder="Rechercher une pièce..." autocomplete="off">
+        <div class="piece-search-results"></div>
+      </div>
     </td>
     <td><input type="number" class="ligne-qte" min="1" step="1" value="1" onchange="recalcLigne(${id})"></td>
     <td><input type="number" class="ligne-prix" min="0" step="1" value="0" onchange="recalcLigne(${id})"></td>
@@ -166,20 +164,20 @@ function addLigne() {
     <td><button type="button" class="btn-icon" onclick="removeLigne(${id})"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button></td>
   `;
   tbody.appendChild(tr);
+
+  ligneWidgets[id] = initPieceSearch(tr.querySelector(".piece-search"), piecesList, {
+    getStockLabel: (p) => computeEffectiveStock(p.id, p.quantite_stock),
+    onSelect: (p) => {
+      if (p) tr.querySelector(".ligne-prix").value = p.prix_vente;
+      recalcLigne(id);
+    },
+  });
 }
 
 function removeLigne(id) {
   document.getElementById(`ligne-${id}`)?.remove();
+  delete ligneWidgets[id];
   recalcTotal();
-}
-
-function onPieceChange(id) {
-  const tr = document.getElementById(`ligne-${id}`);
-  const sel = tr.querySelector(".ligne-piece");
-  const opt = sel.options[sel.selectedIndex];
-  const prix = opt?.dataset?.prix || 0;
-  tr.querySelector(".ligne-prix").value = prix;
-  recalcLigne(id);
 }
 
 function recalcLigne(id) {
@@ -209,16 +207,12 @@ async function saveFacture() {
 
   const lignes = [];
   document.querySelectorAll("#lignes-body tr").forEach(tr => {
-    const pieceId = tr.querySelector(".ligne-piece").value;
+    const rowId = Number(tr.id.replace("ligne-", ""));
+    const piece = ligneWidgets[rowId]?.getSelected();
     const qte = Number(tr.querySelector(".ligne-qte").value) || 0;
     const prix = Number(tr.querySelector(".ligne-prix").value) || 0;
-    if (pieceId && qte > 0) {
-      const piece = piecesList.find(p => String(p.id) === pieceId);
-      if (!piece) {
-        showMsg(msgEl, `Pièce introuvable (id ${pieceId}).`);
-        return;
-      }
-      lignes.push({ piece_id: Number(pieceId), designation: piece.designation, quantite: qte, prix_unitaire: prix, montant: qte * prix });
+    if (piece && qte > 0) {
+      lignes.push({ piece_id: piece.id, designation: piece.designation, quantite: qte, prix_unitaire: prix, montant: qte * prix });
     }
   });
 
@@ -242,6 +236,7 @@ async function saveFacture() {
     showToast("Vente enregistrée hors ligne — elle sera synchronisée automatiquement au retour de la connexion.", "info");
     toggleNewForm();
     document.getElementById("lignes-body").innerHTML = "";
+    ligneWidgets = {};
     document.getElementById("total-facture").textContent = fmtMoney(0);
     document.getElementById("client_id").value = "";
     renderPendingSales();

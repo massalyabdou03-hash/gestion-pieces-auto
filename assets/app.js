@@ -549,6 +549,135 @@ async function syncPendingMovements() {
   }
 }
 
+// ---------- Barre de recherche pour choisir une pièce (facture, mouvement de stock) ----------
+// Remplace un <select> classique par un champ texte avec suggestions filtrées en direct :
+// un <select> devient impraticable dès que le catalogue dépasse une trentaine de pièces.
+// `container` doit contenir un `.piece-search-input` (texte) et un `.piece-search-results`
+// (liste déroulante). `pieces` est la liste initiale ; `setPieces()` permet de la rafraîchir
+// sans recréer le composant (et donc sans dupliquer les écouteurs d'évènements).
+let pieceSearchGlobalListenerAdded = false;
+function ensurePieceSearchGlobalListener() {
+  if (pieceSearchGlobalListenerAdded) return;
+  pieceSearchGlobalListenerAdded = true;
+  // Un seul écouteur global (plutôt qu'un par instance) : ferme n'importe quelle liste
+  // ouverte quand on clique en dehors de son propre champ, sans jamais s'accumuler.
+  document.addEventListener("mousedown", (e) => {
+    document.querySelectorAll(".piece-search-results.open").forEach((results) => {
+      const container = results.closest(".piece-search");
+      if (container && !container.contains(e.target)) {
+        results.classList.remove("open");
+        results.innerHTML = "";
+      }
+    });
+  });
+}
+
+function initPieceSearch(container, pieces, { onSelect, getStockLabel } = {}) {
+  ensurePieceSearchGlobalListener();
+  const input = container.querySelector(".piece-search-input");
+  const results = container.querySelector(".piece-search-results");
+  let filtered = [];
+  let activeIndex = -1;
+  let selected = null;
+
+  const canonicalText = (p) => `${p.designation} (${p.reference_oem})`;
+  const stockValue = (p) => (getStockLabel ? getStockLabel(p) : p.quantite_stock);
+
+  function matches(p, q) {
+    const hay = `${p.designation} ${p.reference_oem} ${p.reference_interne} ${p.marque || ""}`.toLowerCase();
+    return hay.includes(q);
+  }
+
+  function renderResults() {
+    if (filtered.length === 0) {
+      results.innerHTML = `<div class="piece-search-empty">Aucune pièce trouvée.</div>`;
+    } else {
+      const shown = filtered.slice(0, 50);
+      results.innerHTML = shown.map((p, i) => {
+        const stock = stockValue(p);
+        const stockClass = stock <= 0 ? "badge-danger" : (stock <= (p.seuil_alerte ?? 0) ? "badge-warn" : "badge-success");
+        return `
+        <div class="piece-search-item ${i === activeIndex ? "active" : ""}" data-idx="${i}">
+          <div class="psi-desig">${esc(p.designation)}</div>
+          <div class="psi-meta">${esc(p.reference_oem)}${p.marque ? " · " + esc(p.marque) : ""} · <span class="badge ${stockClass}">stock : ${stock}</span></div>
+        </div>`;
+      }).join("") + (filtered.length > shown.length
+        ? `<div class="piece-search-empty">… affine ta recherche (${filtered.length} résultats)</div>`
+        : "");
+    }
+    results.classList.add("open");
+  }
+
+  function open(query) {
+    const q = (query || "").trim().toLowerCase();
+    filtered = q ? pieces.filter((p) => matches(p, q)) : pieces.slice();
+    activeIndex = -1;
+    renderResults();
+  }
+
+  function close() {
+    results.classList.remove("open");
+    results.innerHTML = "";
+  }
+
+  function select(p) {
+    selected = p;
+    input.value = canonicalText(p);
+    close();
+    if (onSelect) onSelect(p);
+  }
+
+  function scrollActiveIntoView() {
+    results.querySelector(".piece-search-item.active")?.scrollIntoView({ block: "nearest" });
+  }
+
+  input.addEventListener("focus", () => open(selected ? "" : input.value));
+  input.addEventListener("input", () => {
+    if (selected && input.value !== canonicalText(selected)) {
+      selected = null;
+      if (onSelect) onSelect(null);
+    }
+    open(input.value);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (!results.classList.contains("open")) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); activeIndex = Math.min(activeIndex + 1, filtered.length - 1); renderResults(); scrollActiveIntoView(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); activeIndex = Math.max(activeIndex - 1, 0); renderResults(); scrollActiveIntoView(); }
+    else if (e.key === "Enter") { e.preventDefault(); if (activeIndex >= 0 && filtered[activeIndex]) select(filtered[activeIndex]); }
+    else if (e.key === "Escape") { close(); }
+  });
+  // mousedown + preventDefault (plutôt que "click") : empêche l'input de perdre le focus
+  // au clic sur un résultat, donc le "blur" ci-dessous ne se déclenche jamais pour un clic
+  // légitime sur la liste, seulement pour un clic réellement en dehors du composant.
+  results.addEventListener("mousedown", (e) => {
+    const item = e.target.closest(".piece-search-item");
+    if (!item) return;
+    e.preventDefault();
+    const idx = Number(item.dataset.idx);
+    if (filtered[idx]) select(filtered[idx]);
+  });
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (!selected) input.value = "";
+      close();
+    }, 120);
+  });
+
+  return {
+    setPieces(newPieces) { pieces = newPieces; },
+    getSelected() { return selected; },
+    setSelected(p) {
+      selected = p;
+      input.value = p ? canonicalText(p) : "";
+    },
+    clear() {
+      selected = null;
+      input.value = "";
+      close();
+    },
+  };
+}
+
 // ---------- Moteur de synchronisation des petites mises à jour en attente ----------
 let fieldUpdatesSyncInProgress = false;
 

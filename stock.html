@@ -37,7 +37,10 @@
         <div class="field-row">
           <div>
             <label>Pièce *</label>
-            <select id="piece_id" required><option value="">Sélectionner...</option></select>
+            <div class="piece-search" id="piece-search">
+              <input type="text" class="piece-search-input" id="piece-search-input" placeholder="Rechercher une pièce (référence, désignation, marque)..." autocomplete="off">
+              <div class="piece-search-results"></div>
+            </div>
           </div>
           <div>
             <label>Type de mouvement *</label>
@@ -76,40 +79,38 @@
 <script src="assets/app.js"></script>
 <script>
 let piecesMap = {};
+const pieceWidget = initPieceSearch(document.getElementById("piece-search"), [], {
+  getStockLabel: (p) => computeEffectiveStock(p.id, p.quantite_stock),
+  onSelect: updateHint,
+});
 
 async function loadPiecesSelect() {
   const { items, offline, savedAt } = await loadWithCache("pieces", () =>
     fetchAllRows(() => supabaseClient.from("pieces").select("*").eq("actif", true).order("designation").order("id"))
   );
   if (offline && savedAt) showToast(`Catalogue hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
-  const sel = document.getElementById("piece_id");
-  items.forEach(p => {
-    piecesMap[p.id] = p;
-    const opt = document.createElement("option");
-    opt.value = p.id;
-    opt.textContent = `${p.designation} (${p.reference_interne}) — stock: ${computeEffectiveStock(p.id, p.quantite_stock)}`;
-    sel.appendChild(opt);
-  });
+  piecesMap = {};
+  items.forEach(p => { piecesMap[p.id] = p; });
+  pieceWidget.setPieces(items);
 }
 
 function updateHint() {
-  const pieceId = document.getElementById("piece_id").value;
+  const piece = pieceWidget.getSelected();
   const type = document.getElementById("type_mouvement").value;
   const qtyLabel = document.getElementById("qty-label");
   const hint = document.getElementById("stock-actuel-hint");
 
   qtyLabel.textContent = type === "AJUSTEMENT" ? "Nouvelle quantité réelle (comptée) *" : "Quantité *";
 
-  if (pieceId && piecesMap[pieceId]) {
-    const effectif = computeEffectiveStock(pieceId, piecesMap[pieceId].quantite_stock);
+  if (piece) {
+    const effectif = computeEffectiveStock(piece.id, piece.quantite_stock);
     hint.textContent = appIsOnline
-      ? `Stock actuel enregistré : ${piecesMap[pieceId].quantite_stock}`
+      ? `Stock actuel enregistré : ${piece.quantite_stock}`
       : `Stock estimé (avec mouvements en attente) : ${effectif}`;
   } else {
     hint.textContent = "";
   }
 }
-document.getElementById("piece_id").addEventListener("change", updateHint);
 document.getElementById("type_mouvement").addEventListener("change", updateHint);
 
 function renderPendingMovementRow(m) {
@@ -182,12 +183,15 @@ document.getElementById("mvt-form").addEventListener("submit", async (e) => {
   const msgEl = document.getElementById("form-msg");
   clearMsg(msgEl);
   const btn = document.getElementById("submit-btn");
+
+  const piece = pieceWidget.getSelected();
+  if (!piece) { showMsg(msgEl, "Sélectionne une pièce."); return; }
+
   btn.disabled = true; btn.textContent = "Enregistrement...";
 
-  const pieceId = Number(document.getElementById("piece_id").value);
   const payload = {
-    piece_id: pieceId,
-    piece_designation: piecesMap[pieceId]?.designation || "",
+    piece_id: piece.id,
+    piece_designation: piece.designation,
     type_mouvement: document.getElementById("type_mouvement").value,
     quantite: Number(document.getElementById("quantite").value),
     motif: document.getElementById("motif").value.trim() || null,
@@ -198,6 +202,7 @@ document.getElementById("mvt-form").addEventListener("submit", async (e) => {
     btn.disabled = false; btn.textContent = "Enregistrer le mouvement";
     showToast("Mouvement enregistré hors ligne — il sera synchronisé automatiquement au retour de la connexion.", "info");
     document.getElementById("mvt-form").reset();
+    pieceWidget.clear();
     updateHint();
     loadHistorique();
     return;
@@ -216,8 +221,7 @@ document.getElementById("mvt-form").addEventListener("submit", async (e) => {
 
   showMsg(msgEl, "Mouvement enregistré.", "success");
   document.getElementById("mvt-form").reset();
-  piecesMap = {};
-  document.getElementById("piece_id").innerHTML = '<option value="">Sélectionner...</option>';
+  pieceWidget.clear();
   await loadPiecesSelect();
   loadHistorique();
 });

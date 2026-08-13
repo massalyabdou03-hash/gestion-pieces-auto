@@ -320,6 +320,21 @@ button{ font-family:var(--font-body); cursor:pointer; }
 }
 .btn-danger-solid:hover{ filter:brightness(1.06); transform:translateY(-1px); }
 
+/* ---------- barre de recherche de pièce (autocomplétion) ---------- */
+.piece-search{ position:relative; }
+.piece-search-results{
+  position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:60;
+  background:var(--surface); border:1px solid var(--border); border-radius:9px;
+  max-height:280px; overflow-y:auto; box-shadow:var(--shadow-lg); display:none;
+}
+.piece-search-results.open{ display:block; }
+.piece-search-item{ padding:9px 12px; cursor:pointer; border-bottom:1px solid var(--border-soft); }
+.piece-search-item:last-child{ border-bottom:none; }
+.piece-search-item:hover, .piece-search-item.active{ background:var(--surface-2); }
+.piece-search-item .psi-desig{ font-size:0.88rem; font-weight:500; color:var(--text); }
+.piece-search-item .psi-meta{ font-size:0.76rem; color:var(--text-muted); margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.piece-search-empty{ padding:12px; text-align:center; color:var(--text-muted); font-size:0.82rem; }
+
 .hint{ color:var(--text-muted); font-size:0.8rem; margin-top:4px;}
 .search-input{ max-width:280px; }
 .toolbar{ display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
