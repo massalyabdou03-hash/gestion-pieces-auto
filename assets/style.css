@@ -139,7 +139,7 @@ body::before{
 }
 .btn-logout:hover{ color: var(--danger); border-color: var(--danger); background: var(--danger-dim); }
 
-.main{flex:1; padding: 30px 36px; max-width: 1220px;}
+.main{flex:1; min-width:0; padding: 30px 36px; max-width: 1220px;}
 .topbar{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:26px; gap:16px; flex-wrap:wrap;}
 .topbar .subtitle{ color: var(--text-muted); font-size:0.9rem; margin-top:2px;}
 .topbar-actions{ display:flex; gap:10px; align-items:center; }

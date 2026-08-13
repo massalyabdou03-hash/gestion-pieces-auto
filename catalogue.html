@@ -188,18 +188,22 @@ function renderTable(pieces) {
   }
   el.innerHTML = `
     <div style="overflow-x:auto;">
-    <table>
+    <table style="table-layout:fixed;">
+      <colgroup>
+        <col style="width:130px;"><col style="width:160px;"><col style="width:160px;"><col style="width:160px;">
+        <col style="width:100px;"><col style="width:100px;"><col style="width:90px;"><col style="width:70px;"><col style="width:70px;">
+      </colgroup>
       <thead><tr>
-        <th>Référence</th><th>Désignation</th><th style="width:220px;">Description</th><th style="width:220px;">Infos complémentaires</th><th>Marque</th><th>Emplacement</th>
+        <th>Référence</th><th>Désignation</th><th>Description</th><th>Infos complémentaires</th><th>Marque</th><th>Emplacement</th>
         <th class="num">Prix vente</th><th class="num">Stock</th><th></th>
       </tr></thead>
       <tbody>
         ${pieces.map(p => `
           <tr>
             <td><div class="ref">${esc(p.reference_oem)}</div><div class="hint">${esc(p.reference_interne)}</div></td>
-            <td>${esc(p.designation)}</td>
-            <td style="white-space:pre-wrap; word-break:break-word;">${esc(p.description || "—")}</td>
-            <td style="white-space:pre-wrap; word-break:break-word;">${esc(p.informations_complementaires || "—")}</td>
+            <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(p.designation)}</td>
+            <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(p.description || "")}">${esc(p.description || "—")}</td>
+            <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(p.informations_complementaires || "")}">${esc(p.informations_complementaires || "—")}</td>
             <td>${esc(p.marque || "—")}</td>
             <td>${esc(p.emplacement || "—")}</td>
             <td class="num">${fmtMoney(p.prix_vente)}</td>
