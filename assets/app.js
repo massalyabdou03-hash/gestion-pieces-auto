@@ -18,6 +18,23 @@ async function logout() {
   window.location.href = "login.html";
 }
 
+// Supabase (PostgREST) plafonne chaque requête à 1000 lignes par défaut : au-delà,
+// il faut paginer avec .range() pour récupérer la totalité des lignes. `queryBuilder`
+// doit être une fonction qui renvoie une nouvelle requête Supabase à chaque appel
+// (ex: () => supabaseClient.from("pieces").select("*").eq("actif", true).order("designation")).
+async function fetchAllRows(queryBuilder, pageSize = 1000) {
+  let rows = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await queryBuilder().range(offset, offset + pageSize - 1);
+    if (error) return { data: null, error };
+    rows = rows.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    offset += pageSize;
+  }
+  return { data: rows, error: null };
+}
+
 function fmtMoney(n) {
   const v = Number(n || 0);
   return v.toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + " F";
@@ -112,9 +129,24 @@ function confirmDialog(message, opts = {}) {
 }
 
 // Traduit les erreurs Postgres/Supabase les plus courantes en messages compréhensibles
+const DUPLICATE_FIELD_LABELS = {
+  reference_interne: "La référence interne (SKU)",
+  code_barre: "Le code-barres",
+  reference_oem: "La référence OEM",
+  numero_facture: "Le numéro de facture",
+};
+
 function friendlyError(err) {
   const msg = err?.message || String(err);
-  if (msg.includes("duplicate key")) return "Cette référence existe déjà.";
+  if (msg.includes("duplicate key")) {
+    // Le détail Postgres a la forme : Key (champ)=(valeur) already exists.
+    const m = (err?.details || "").match(/Key \(([^)]+)\)=\(([^)]+)\)/);
+    if (m) {
+      const label = DUPLICATE_FIELD_LABELS[m[1]] || `Le champ "${m[1]}"`;
+      return `${label} "${m[2]}" est déjà utilisé par une autre pièce.`;
+    }
+    return "Cette référence existe déjà.";
+  }
   if (msg.includes("violates foreign key")) return "Cet élément est utilisé ailleurs et ne peut pas être supprimé.";
   if (msg.includes("Stock insuffisant")) return msg.split("CONTEXT")[0].trim();
   if (msg.includes("Invalid login credentials")) return "Code d'accès incorrect.";

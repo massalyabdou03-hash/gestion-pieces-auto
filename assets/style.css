@@ -117,13 +117,15 @@ body::before{
   -webkit-background-clip: initial; background-clip:initial;
 }
 .nav-link{
-  display:flex; align-items:center; gap:10px;
+  display:flex; align-items:center; gap:11px;
   padding: 10px 12px; border-radius: var(--radius);
   color: var(--text-muted); text-decoration:none;
   font-size:0.92rem; font-weight:500;
   border-left: 2px solid transparent;
   transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
+.nav-icon{ width:18px; height:18px; flex-shrink:0; opacity:0.85; }
+.nav-link.active .nav-icon{ opacity:1; }
 .nav-link:hover{ background: var(--surface-2); color: var(--text); transform: translateX(2px); }
 .nav-link.active{
   background: var(--accent-dim); color: var(--accent-hi); border-left-color: var(--accent);
@@ -209,8 +211,15 @@ button{ font-family:var(--font-body); cursor:pointer; }
 .btn-danger{ background:var(--danger-dim); color:var(--danger); border:1px solid var(--danger); box-shadow:none;}
 .btn-danger:hover{ background: var(--danger); color:#1a0a09; filter:none; }
 .btn-sm{ padding:6px 12px; font-size:0.8rem; border-radius:6px;}
-.btn-icon{ background:none; border:none; color:var(--text-muted); font-size:1rem; padding:5px 8px; border-radius:6px; transition: all 0.12s ease;}
+.btn-icon{
+  display:inline-flex; align-items:center; justify-content:center;
+  background:none; border:none; color:var(--text-muted);
+  padding:6px; border-radius:6px; transition: all 0.12s ease;
+}
 .btn-icon:hover{ color: var(--accent-hi); background: var(--surface-2); }
+.btn-icon svg{ width:16px; height:16px; }
+.icon{ width:16px; height:16px; flex-shrink:0; }
+.btn .icon, .btn-secondary .icon{ margin-right:7px; vertical-align:-3px; }
 
 .btn-back{
   display:inline-flex; align-items:center; gap:8px;
@@ -345,7 +354,8 @@ button{ font-family:var(--font-body); cursor:pointer; }
 .dropzone:hover, .dropzone.dragover{
   border-color: var(--accent); background: var(--accent-dim); box-shadow: 0 0 0 4px var(--accent-glow) inset;
 }
-.dropzone .dz-icon{ font-size:1.9rem; margin-bottom:8px; }
+.dropzone .dz-icon{ margin-bottom:10px; color:var(--text-muted); }
+.dropzone .dz-icon svg{ width:32px; height:32px; }
 .dropzone .dz-title{ font-weight:600; font-size:0.95rem; }
 .dropzone .dz-sub{ color:var(--text-muted); font-size:0.8rem; margin-top:4px; }
 .dropzone input[type="file"]{ display:none; }

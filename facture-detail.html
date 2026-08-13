@@ -10,11 +10,12 @@
 <div class="app">
   <nav class="sidebar no-print">
     <div class="brand"><img src="assets/img/logo-sylla-icon.png" class="brand-logo" alt="Sylla Automobile"> Sylla Automobile <span class="brand-tag">Ziguinchor</span></div>
-    <a class="nav-link" href="index.html">📊 Tableau de bord</a>
-    <a class="nav-link" href="catalogue.html">📦 Catalogue</a>
-    <a class="nav-link" href="stock.html">↕️ Mouvements stock</a>
-    <a class="nav-link active" href="factures.html">🧾 Factures</a>
-    <a class="nav-link" href="credits.html">💳 Emprunts</a>
+    <a class="nav-link" href="index.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg> Tableau de bord</a>
+    <a class="nav-link" href="catalogue.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg> Catalogue</a>
+    <a class="nav-link" href="stock.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v18"/><path d="M4 7l4-4 4 4"/><path d="M16 21V3"/><path d="M20 17l-4 4-4-4"/></svg> Mouvements stock</a>
+    <a class="nav-link" href="rupture-stock.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 17h.01"/></svg> Ruptures de stock</a>
+    <a class="nav-link active" href="factures.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12v19l-3-2-3 2-3-2-3 2V2z"/><path d="M9 8h6M9 12h6"/></svg> Factures</a>
+    <a class="nav-link" href="credits.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Emprunts</a>
     <div class="sidebar-footer">
       <div class="hint mono" id="current-user-email" style="margin-bottom:8px;"></div>
       <button class="btn-logout" onclick="logout()">Déconnexion</button>
@@ -78,7 +79,8 @@ async function loadFacture() {
           <div class="subtitle">${fmtDate(facture.created_at)} <span class="badge ${badgeClass[facture.statut]}" style="margin-left:8px;">${facture.statut}</span></div>
         </div>
         <div class="no-print toolbar">
-          ${facture.statut === "VALIDEE" ? `<button class="btn btn-secondary" onclick="window.print()">🖨️ Imprimer</button>` : ""}
+          ${facture.statut === "VALIDEE" ? `<button class="btn btn-secondary" onclick="window.print()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M6 17h12v4H6z"/></svg>Imprimer</button>` : ""}
+          ${facture.statut === "BROUILLON" ? `<button class="btn btn-danger-solid" onclick="supprimerBrouillon()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>Supprimer le brouillon</button>` : ""}
         </div>
       </div>
 
@@ -173,6 +175,21 @@ async function validerFacture() {
 
   if (error) { showMsg(msgEl, friendlyError(error)); return; }
   loadFacture();
+}
+
+async function supprimerBrouillon() {
+  const ok = await confirmDialog("Supprimer ce brouillon de facture ? Cette action est irréversible.", {
+    title: "Supprimer le brouillon",
+    confirmLabel: "Supprimer",
+    danger: true,
+  });
+  if (!ok) return;
+
+  const { error } = await supabaseClient
+    .from("factures").delete().eq("id", factureId).eq("statut", "BROUILLON");
+
+  if (error) { showToast(friendlyError(error), "error"); return; }
+  window.location.href = "factures.html";
 }
 
 async function marquerPaye() {
