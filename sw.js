@@ -15,7 +15,7 @@
 // postes déjà installés continueront de servir l'ancienne version en cache.
 // =============================================================================
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const SHELL_CACHE = `sylla-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `sylla-runtime-${CACHE_VERSION}`;
 
@@ -28,6 +28,7 @@ const SHELL_ASSETS = [
   "factures.html",
   "facture-detail.html",
   "credits.html",
+  "clients.html",
   "assets/style.css",
   "assets/app.js",
   "assets/config.js",

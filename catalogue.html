@@ -16,6 +16,7 @@
     <a class="nav-link" href="rupture-stock.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 17h.01"/></svg> Ruptures de stock</a>
     <a class="nav-link" href="factures.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12v19l-3-2-3 2-3-2-3 2V2z"/><path d="M9 8h6M9 12h6"/></svg> Factures</a>
     <a class="nav-link" href="credits.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Emprunts</a>
+    <a class="nav-link" href="clients.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Clients</a>
     <div class="sidebar-footer">
       <div class="hint mono" id="current-user-email" style="margin-bottom:8px;"></div>
       <button class="btn-logout" onclick="logout()">Déconnexion</button>
@@ -76,7 +77,7 @@
       <textarea id="description" rows="3" placeholder="Description de la pièce (état, compatibilité, caractéristiques...)"></textarea>
       <label>Informations complémentaires</label>
       <textarea id="informations_complementaires" rows="3" placeholder="Toute autre information utile sur cette pièce"></textarea>
-      <p class="hint" id="stock-hint" style="display:none;">Pour modifier le stock d'une pièce existante, passe par la page <strong>Mouvements stock</strong> — cela garde un historique traçable.</p>
+      <p class="hint" id="stock-hint" style="display:none;">Modifier cette valeur crée un ajustement de stock traçable (visible dans <strong>Mouvements stock</strong>).</p>
       <div id="form-msg"></div>
       <div class="modal-actions">
         <button type="button" class="btn btn-secondary" onclick="closeModal()">Annuler</button>
@@ -294,7 +295,7 @@ function editPiece(id) {
   document.getElementById("description").value = p.description || "";
   document.getElementById("informations_complementaires").value = p.informations_complementaires || "";
   document.getElementById("quantite_stock").value = p.quantite_stock;
-  document.getElementById("quantite_stock").disabled = true;
+  document.getElementById("quantite_stock").disabled = false;
   document.getElementById("seuil_alerte").value = p.seuil_alerte;
   document.getElementById("stock-hint").style.display = "block";
   document.getElementById("modal-title").textContent = "Modifier la pièce";
@@ -385,11 +386,28 @@ document.getElementById("piece-form").addEventListener("submit", async (e) => {
     seuil_alerte: Number(document.getElementById("seuil_alerte").value) || 0,
   };
 
+  const nouvelleQuantite = Number(document.getElementById("quantite_stock").value) || 0;
+
   let error;
   if (id) {
     ({ error } = await supabaseClient.from("pieces").update(payload).eq("id", id));
+
+    // Le stock ne se met pas à jour via ce simple UPDATE : on passe par la même RPC que
+    // la page "Mouvements stock" (type AJUSTEMENT) pour garder un historique traçable,
+    // seulement si la quantité a réellement changé.
+    if (!error) {
+      const piece = allPieces.find(p => p.id === Number(id));
+      if (piece && piece.quantite_stock !== nouvelleQuantite) {
+        ({ error } = await supabaseClient.rpc("enregistrer_mouvement_stock", {
+          p_piece_id: Number(id),
+          p_type: "AJUSTEMENT",
+          p_quantite: nouvelleQuantite,
+          p_motif: "Ajustement depuis la fiche pièce",
+        }));
+      }
+    }
   } else {
-    payload.quantite_stock = Number(document.getElementById("quantite_stock").value) || 0;
+    payload.quantite_stock = nouvelleQuantite;
     ({ error } = await supabaseClient.from("pieces").insert(payload));
   }
 

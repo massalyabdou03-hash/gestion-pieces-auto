@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clients — Sylla Automobile — Ziguinchor</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="brand"><img src="assets/img/logo-sylla-icon.png" class="brand-logo" alt="Sylla Automobile"> Sylla Automobile <span class="brand-tag">Ziguinchor</span></div>
+    <a class="nav-link" href="index.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg> Tableau de bord</a>
+    <a class="nav-link" href="catalogue.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg> Catalogue</a>
+    <a class="nav-link" href="stock.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v18"/><path d="M4 7l4-4 4 4"/><path d="M16 21V3"/><path d="M20 17l-4 4-4-4"/></svg> Mouvements stock</a>
+    <a class="nav-link" href="rupture-stock.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 17h.01"/></svg> Ruptures de stock</a>
+    <a class="nav-link" href="factures.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12v19l-3-2-3 2-3-2-3 2V2z"/><path d="M9 8h6M9 12h6"/></svg> Factures</a>
+    <a class="nav-link" href="credits.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Emprunts</a>
+    <a class="nav-link active" href="clients.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Clients</a>
+    <div class="sidebar-footer">
+      <div class="hint mono" id="current-user-email" style="margin-bottom:8px;"></div>
+      <button class="btn-logout" onclick="logout()">Déconnexion</button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Clients</h1>
+        <div class="subtitle">Liste des clients enregistrés et de leurs informations</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn clients-write-action" onclick="openModal()">+ Nouveau client</button>
+      </div>
+    </div>
+
+    <div class="grid-stats">
+      <div class="stat-card"><div class="label">Clients enregistrés</div><div class="value" id="stat-total">—</div></div>
+      <div class="stat-card warn"><div class="label">Avec un bon impayé</div><div class="value" id="stat-impayes">—</div></div>
+      <div class="stat-card"><div class="label">Total facturé (validé)</div><div class="value" id="stat-total-facture">—</div></div>
+    </div>
+
+    <div class="card">
+      <div class="toolbar" style="margin-bottom:16px;">
+        <input class="search-input" id="search" placeholder="Rechercher (nom, téléphone, email)...">
+      </div>
+      <div id="table-content">Chargement...</div>
+    </div>
+  </main>
+</div>
+
+<!-- Modal ajout/édition client -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modal-title">Nouveau client</h3>
+      <button class="close-x" onclick="closeModal()">×</button>
+    </div>
+    <form id="client-form">
+      <input type="hidden" id="client-id">
+      <label>Nom *</label>
+      <input id="nom" required>
+      <div class="field-row">
+        <div><label>Téléphone</label><input id="telephone" placeholder="ex: 77 123 45 67"></div>
+        <div><label>Email</label><input id="email" type="email"></div>
+      </div>
+      <label>Adresse</label>
+      <textarea id="adresse" rows="2" placeholder="Quartier, ville..."></textarea>
+      <div id="form-msg"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeModal()">Annuler</button>
+        <button type="submit" class="btn" id="save-btn">Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal détail client (lecture seule) -->
+<div class="modal-backdrop" id="detail-backdrop">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="detail-title">Détail du client</h3>
+      <button class="close-x" onclick="closeDetailModal()">×</button>
+    </div>
+    <div id="detail-content"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeDetailModal()">Fermer</button>
+      <button type="button" class="btn" id="detail-edit-btn">Modifier</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+let allClients = [];
+let clientStats = {}; // { [client_id]: { nbFactures, totalAchete, du, impaye } }
+
+// Créer/modifier/supprimer un client implique des règles (contrainte de clé étrangère
+// avec les factures) qu'on ne peut pas garantir hors ligne : ces actions restent
+// désactivées tant que la connexion n'est pas revenue. La lecture reste toujours
+// possible via le cache local (mêmes clients que ceux utilisés à la vente).
+function updateWriteActionsAvailability() {
+  const disabled = !appIsOnline;
+  document.querySelectorAll(".clients-write-action").forEach(btn => {
+    btn.disabled = disabled;
+    btn.title = disabled ? "Connexion requise pour modifier les clients." : "";
+  });
+}
+
+async function loadClients() {
+  const { items, offline, savedAt } = await loadWithCache("clients", () =>
+    fetchAllRows(() => supabaseClient.from("clients").select("*").order("nom"))
+  );
+  allClients = items;
+  if (offline && savedAt) showToast(`Clients hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
+}
+
+// Statistiques par client (nombre de factures validées, montant total acheté, solde dû
+// sur les ventes à crédit) : dérivées des factures, en lecture seule, avec repli sur le
+// cache local hors ligne. Ne bloque pas l'affichage de la liste si ça échoue.
+async function loadClientStats() {
+  clientStats = {};
+  try {
+    const { data, error } = await fetchAllRows(() =>
+      supabaseClient.from("factures")
+        .select("client_id, montant_total, mode_paiement, paye")
+        .eq("statut", "VALIDEE")
+    );
+    if (error || !data) return;
+    data.forEach(f => {
+      if (!clientStats[f.client_id]) clientStats[f.client_id] = { nbFactures: 0, totalAchete: 0, du: 0 };
+      const s = clientStats[f.client_id];
+      s.nbFactures += 1;
+      s.totalAchete += Number(f.montant_total);
+      if (f.mode_paiement === "CREDIT" && !f.paye) s.du += Number(f.montant_total);
+    });
+  } catch {
+    // hors ligne : pas de connexion pour calculer les statistiques, elles resteront à 0.
+  }
+}
+
+function buildStats() {
+  document.getElementById("stat-total").textContent = allClients.length;
+
+  let clientsImpayes = 0;
+  let totalFacture = 0;
+  Object.values(clientStats).forEach(s => {
+    totalFacture += s.totalAchete;
+    if (s.du > 0) clientsImpayes++;
+  });
+  document.getElementById("stat-impayes").textContent = clientsImpayes;
+  document.getElementById("stat-total-facture").textContent = fmtMoney(totalFacture);
+}
+
+function renderTable(clients) {
+  const el = document.getElementById("table-content");
+  if (clients.length === 0) {
+    el.innerHTML = `<div class="empty-state">Aucun client. Clique sur "+ Nouveau client" pour commencer.</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="table-wrapper">
+    <table>
+      <thead><tr>
+        <th>Nom</th><th>Téléphone</th><th>Email</th><th>Adresse</th><th>Client depuis</th>
+        <th class="num">Factures</th><th class="num">Total acheté</th><th class="num">Solde dû</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${clients.map(c => {
+          const s = clientStats[c.id] || { nbFactures: 0, totalAchete: 0, du: 0 };
+          return `
+          <tr style="cursor:pointer;" onclick="openDetailModal(${c.id})">
+            <td>${esc(c.nom)}</td>
+            <td class="hint">${esc(c.telephone || "—")}</td>
+            <td class="hint">${esc(c.email || "—")}</td>
+            <td class="hint" style="max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(c.adresse || "")}">${esc(c.adresse || "—")}</td>
+            <td class="hint">${fmtDate(c.created_at)}</td>
+            <td class="num">${s.nbFactures}</td>
+            <td class="num">${fmtMoney(s.totalAchete)}</td>
+            <td class="num">${s.du > 0 ? `<span class="badge badge-warn">${fmtMoney(s.du)}</span>` : "—"}</td>
+            <td class="actions-cell">
+              <button class="btn-icon clients-write-action" title="Modifier" onclick="event.stopPropagation(); editClient(${c.id})"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+              <button class="btn-icon clients-write-action" title="Supprimer" onclick="event.stopPropagation(); deleteClient(${c.id})"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
+            </td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+    </div>`;
+  updateWriteActionsAvailability();
+}
+
+document.getElementById("search").addEventListener("input", (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  if (!q) { renderTable(allClients); return; }
+  renderTable(allClients.filter(c =>
+    (c.nom || "").toLowerCase().includes(q) ||
+    (c.telephone || "").toLowerCase().includes(q) ||
+    (c.email || "").toLowerCase().includes(q)
+  ));
+});
+
+function openModal() {
+  if (!appIsOnline) { showToast("Connexion requise pour modifier les clients.", "error"); return; }
+  document.getElementById("client-form").reset();
+  document.getElementById("client-id").value = "";
+  document.getElementById("modal-title").textContent = "Nouveau client";
+  clearMsg(document.getElementById("form-msg"));
+  document.getElementById("modal-backdrop").classList.add("open");
+}
+
+function editClient(id) {
+  if (!appIsOnline) { showToast("Connexion requise pour modifier les clients.", "error"); return; }
+  const c = allClients.find(x => x.id === id);
+  if (!c) return;
+  document.getElementById("client-id").value = c.id;
+  document.getElementById("nom").value = c.nom;
+  document.getElementById("telephone").value = c.telephone || "";
+  document.getElementById("email").value = c.email || "";
+  document.getElementById("adresse").value = c.adresse || "";
+  document.getElementById("modal-title").textContent = "Modifier le client";
+  clearMsg(document.getElementById("form-msg"));
+  document.getElementById("modal-backdrop").classList.add("open");
+}
+
+function closeModal() {
+  document.getElementById("modal-backdrop").classList.remove("open");
+}
+
+function openDetailModal(id) {
+  const c = allClients.find(x => x.id === id);
+  if (!c) return;
+  const s = clientStats[c.id] || { nbFactures: 0, totalAchete: 0, du: 0 };
+
+  document.getElementById("detail-title").textContent = c.nom;
+  document.getElementById("detail-content").innerHTML = `
+    <div class="detail-grid">
+      <div><div class="hint">Téléphone</div><div>${esc(c.telephone || "—")}</div></div>
+      <div><div class="hint">Email</div><div>${esc(c.email || "—")}</div></div>
+      <div><div class="hint">Client depuis</div><div>${fmtDate(c.created_at)}</div></div>
+      <div><div class="hint">Factures validées</div><div>${s.nbFactures}</div></div>
+      <div><div class="hint">Total acheté</div><div>${fmtMoney(s.totalAchete)}</div></div>
+      <div><div class="hint">Solde dû</div><div>${s.du > 0 ? `<span class="badge badge-warn">${fmtMoney(s.du)}</span>` : fmtMoney(0)}</div></div>
+    </div>
+    <div style="margin-top:16px;">
+      <div class="hint">Adresse</div>
+      <div style="white-space:pre-wrap; margin-top:4px;">${c.adresse ? esc(c.adresse) : '<span class="hint">—</span>'}</div>
+    </div>
+  `;
+  document.getElementById("detail-edit-btn").onclick = () => { closeDetailModal(); editClient(id); };
+  document.getElementById("detail-backdrop").classList.add("open");
+}
+
+function closeDetailModal() {
+  document.getElementById("detail-backdrop").classList.remove("open");
+}
+
+async function deleteClient(id) {
+  if (!appIsOnline) { showToast("Connexion requise pour modifier les clients.", "error"); return; }
+  const c = allClients.find(x => x.id === id);
+  const ok = await confirmDialog(`Supprimer "${c.nom}" ? Impossible si ce client a déjà des factures enregistrées.`, {
+    title: "Supprimer le client",
+    confirmLabel: "Supprimer",
+    danger: true,
+  });
+  if (!ok) return;
+  const { error } = await supabaseClient.from("clients").delete().eq("id", id);
+  if (error) { showToast(friendlyError(error), "error"); return; }
+  showToast(`"${c.nom}" supprimé.`, "success");
+  await refreshAll();
+}
+
+document.getElementById("client-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msgEl = document.getElementById("form-msg");
+  clearMsg(msgEl);
+  const btn = document.getElementById("save-btn");
+  btn.disabled = true; btn.textContent = "Enregistrement...";
+
+  const id = document.getElementById("client-id").value;
+  const payload = {
+    nom: document.getElementById("nom").value.trim(),
+    telephone: document.getElementById("telephone").value.trim() || null,
+    email: document.getElementById("email").value.trim() || null,
+    adresse: document.getElementById("adresse").value.trim() || null,
+  };
+
+  let error;
+  if (id) {
+    ({ error } = await supabaseClient.from("clients").update(payload).eq("id", id));
+  } else {
+    ({ error } = await supabaseClient.from("clients").insert(payload));
+  }
+
+  btn.disabled = false; btn.textContent = "Enregistrer";
+  if (error) { showMsg(msgEl, friendlyError(error)); return; }
+  closeModal();
+  await refreshAll();
+});
+
+async function refreshAll() {
+  await loadClients();
+  await loadClientStats();
+  buildStats();
+  renderTable(allClients);
+}
+
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+  await refreshAll();
+  document.addEventListener("sylla:connectivity-changed", updateWriteActionsAvailability);
+})();
+</script>
+</body>
+</html>

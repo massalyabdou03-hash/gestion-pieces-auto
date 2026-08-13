@@ -16,6 +16,7 @@
     <a class="nav-link" href="rupture-stock.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 17h.01"/></svg> Ruptures de stock</a>
     <a class="nav-link" href="factures.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12v19l-3-2-3 2-3-2-3 2V2z"/><path d="M9 8h6M9 12h6"/></svg> Factures</a>
     <a class="nav-link" href="credits.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Emprunts</a>
+    <a class="nav-link" href="clients.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Clients</a>
     <div class="sidebar-footer">
       <div class="hint mono" id="current-user-email" style="margin-bottom:8px;"></div>
       <button class="btn-logout" onclick="logout()">Déconnexion</button>
@@ -32,7 +33,15 @@
 
     <div class="grid-stats">
       <div class="stat-card"><div class="label">Pièces au catalogue</div><div class="value" id="stat-pieces">—</div></div>
-      <div class="stat-card"><div class="label">Valeur du stock (achat)</div><div class="value" id="stat-valeur">—</div></div>
+      <div class="stat-card">
+        <div class="label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+          <span>Valeur du stock (achat)</span>
+          <button type="button" class="btn-icon" id="toggle-valeur-btn" title="Afficher/masquer" style="padding:2px;">
+            <svg class="icon" id="toggle-valeur-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+        <div class="value" id="stat-valeur">—</div>
+      </div>
       <div class="stat-card warn"><div class="label">Alertes réappro</div><div class="value" id="stat-alertes">—</div></div>
       <div class="stat-card"><div class="label">Factures validées (mois)</div><div class="value" id="stat-factures">—</div></div>
     </div>
@@ -51,6 +60,33 @@
 <script src="assets/config.js"></script>
 <script src="assets/app.js"></script>
 <script>
+// La valeur du stock (achat) est une information sensible qu'on ne veut pas laisser
+// affichée en permanence à l'écran : l'utilisateur peut la masquer, et ce choix est
+// mémorisé (localStorage) pour rester masquée aux prochaines visites sur ce poste.
+const HIDE_VALEUR_STOCK_KEY = "sylla_hide_valeur_stock";
+
+function setupValeurStockToggle(valeur) {
+  const valueEl = document.getElementById("stat-valeur");
+  const btn = document.getElementById("toggle-valeur-btn");
+  const icon = document.getElementById("toggle-valeur-icon");
+  const eyeOffPath = '<path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a20.3 20.3 0 0 1 5.06-6.06M9.9 4.24A10.6 10.6 0 0 1 12 4c7 0 11 8 11 8a20.3 20.3 0 0 1-3.22 4.44"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/>';
+  const eyePath = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+
+  function render() {
+    const hidden = localStorage.getItem(HIDE_VALEUR_STOCK_KEY) === "1";
+    valueEl.textContent = hidden ? "•••••• F" : fmtMoney(valeur);
+    icon.innerHTML = hidden ? eyeOffPath : eyePath;
+    btn.title = hidden ? "Afficher la valeur du stock" : "Masquer la valeur du stock";
+  }
+
+  btn.onclick = () => {
+    const hidden = localStorage.getItem(HIDE_VALEUR_STOCK_KEY) === "1";
+    localStorage.setItem(HIDE_VALEUR_STOCK_KEY, hidden ? "0" : "1");
+    render();
+  };
+  render();
+}
+
 (async () => {
   const session = await requireAuth();
   if (!session) return;
@@ -66,7 +102,7 @@
 
   document.getElementById("stat-pieces").textContent = pieces.length;
   const valeur = pieces.reduce((sum, p) => sum + (p.quantite_stock * Number(p.prix_achat)), 0);
-  document.getElementById("stat-valeur").textContent = fmtMoney(valeur);
+  setupValeurStockToggle(valeur);
 
   // Stat: factures validées ce mois-ci
   const debutMois = new Date(); debutMois.setDate(1); debutMois.setHours(0,0,0,0);
