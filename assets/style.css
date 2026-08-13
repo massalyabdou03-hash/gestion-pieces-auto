@@ -192,6 +192,7 @@ input:focus,select:focus,textarea:focus{ outline:none; border-color:var(--accent
 textarea{resize:vertical; min-height:60px;}
 .field-row{ display:grid; grid-template-columns:1fr 1fr; gap:14px;}
 .field-row-3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;}
+.detail-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px 20px;}
 .input-with-action{ display:flex; gap:8px; align-items:flex-start; }
 .input-with-action select{ flex:1; }
 .input-with-action .btn{ white-space:nowrap; margin-top:0; }
