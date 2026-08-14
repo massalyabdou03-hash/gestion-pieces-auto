@@ -7,20 +7,58 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+// getSession() peut essayer de rafraîchir le jeton de connexion via le réseau : hors
+// ligne, cet appel peut soit échouer, soit rester bloqué indéfiniment. On ne le laisse
+// donc jamais dépasser quelques secondes.
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve({ data: { session: null }, timedOut: true }), ms)),
+  ]);
+}
+
+// Repère juste la présence d'une session Supabase déjà stockée sur ce poste (lecture
+// locale pure, sans réseau) : sert de filet de secours hors ligne si getSession()
+// échoue ou traîne, pour ne pas bloquer l'accès à un poste déjà connecté auparavant.
+function hasStoredSupabaseSession() {
+  try {
+    return Object.keys(localStorage).some((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
+  } catch {
+    return false;
+  }
+}
+
 // Redirige vers login.html si aucune session active. A appeler en haut de chaque page protégée.
 async function requireAuth() {
-  const { data } = await supabaseClient.auth.getSession();
-  if (!data.session) {
+  let session = null;
+  try {
+    const { data } = await withTimeout(supabaseClient.auth.getSession(), 4000);
+    session = data.session;
+  } catch {
+    // getSession() a levé une erreur (typiquement hors ligne) : on retombe ci-dessous
+    // sur la présence d'une session déjà connue, plutôt que de bloquer l'accès.
+  }
+
+  if (!session && !navigator.onLine && hasStoredSupabaseSession()) {
+    // Hors ligne, mais ce poste s'est déjà connecté avec succès auparavant : on laisse
+    // passer. Les lectures retombent sur le cache local ; toute écriture nécessitant
+    // vraiment le réseau échouera proprement (message clair), sans jamais être perdue
+    // silencieusement grâce aux files d'attente hors ligne.
+    session = { offline: true, user: null };
+  }
+
+  if (!session) {
     window.location.href = "login.html";
     return null;
   }
-  const email = data.session.user.email;
+
+  const email = session.user?.email;
   const el = document.getElementById("current-user-email");
   // L'email est un identifiant technique généré à partir du code d'accès (ex: "1234@acces.local").
   // On affiche uniquement la partie code, pour ne pas exposer ce détail à l'utilisateur.
-  if (el) el.textContent = "Code : " + (email ? email.split("@")[0] : "");
+  if (el) el.textContent = email ? "Code : " + email.split("@")[0] : "Hors ligne";
   initConnectivity();
-  return data.session;
+  return session;
 }
 
 async function logout() {

@@ -79,6 +79,7 @@
 <script src="assets/app.js"></script>
 <script>
 let piecesMap = {};
+let latestMouvements = [];
 const pieceWidget = initPieceSearch(document.getElementById("piece-search"), [], {
   getStockLabel: (p) => computeEffectiveStock(p.id, p.quantite_stock),
   onSelect: updateHint,
@@ -133,6 +134,7 @@ function renderPendingMovementRow(m) {
         ${statusBadge[m.status] || ""}
         ${m.status === "error" ? `<div style="color:var(--danger);">${esc(m.errorMsg || "")}</div>` : ""}
       </td>
+      <td></td>
     </tr>`;
 }
 
@@ -141,10 +143,11 @@ async function loadHistorique() {
   const { items, offline, savedAt } = await loadWithCache("mouvements", () =>
     supabaseClient
       .from("mouvements_stock")
-      .select("id, type_mouvement, quantite, quantite_avant, quantite_apres, motif, created_at, pieces(designation, reference_interne)")
+      .select("id, type_mouvement, quantite, quantite_avant, quantite_apres, motif, facture_id, created_at, pieces(designation, reference_interne)")
       .order("created_at", { ascending: false })
       .limit(40)
   );
+  latestMouvements = items;
 
   const pending = getPendingMovements()
     .filter(m => m.status !== "done")
@@ -162,7 +165,7 @@ async function loadHistorique() {
 
   el.innerHTML = `
     <table>
-      <thead><tr><th>Date</th><th>Pièce</th><th>Type</th><th class="num">Avant</th><th class="num">Après</th><th>Motif</th></tr></thead>
+      <thead><tr><th>Date</th><th>Pièce</th><th>Type</th><th class="num">Avant</th><th class="num">Après</th><th>Motif</th><th></th></tr></thead>
       <tbody>
         ${pending.map(renderPendingMovementRow).join("")}
         ${items.map(m => `
@@ -173,9 +176,30 @@ async function loadHistorique() {
             <td class="num">${m.quantite_avant}</td>
             <td class="num">${m.quantite_apres}</td>
             <td class="hint">${esc(m.motif || "—")}</td>
+            <td class="actions-cell">
+              ${m.facture_id
+                ? `<span class="hint" title="Généré par une facture : annule la facture plutôt que ce mouvement.">—</span>`
+                : `<button class="btn-icon" title="Supprimer ce mouvement" onclick="supprimerMouvement(${m.id})"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>`}
+            </td>
           </tr>`).join("")}
       </tbody>
     </table>`;
+}
+
+async function supprimerMouvement(id) {
+  if (!appIsOnline) { showToast("Connexion requise pour supprimer un mouvement.", "error"); return; }
+  const mvt = latestMouvements.find(m => m.id === id);
+  const ok = await confirmDialog(
+    `Supprimer ce mouvement${mvt ? ` (${mvt.pieces?.designation || "pièce"})` : ""} ? Le stock de la pièce sera corrigé automatiquement en conséquence.`,
+    { title: "Supprimer le mouvement", confirmLabel: "Supprimer", danger: true }
+  );
+  if (!ok) return;
+
+  const { error } = await supabaseClient.rpc("supprimer_mouvement_stock", { p_mouvement_id: id });
+  if (error) { showToast(friendlyError(error), "error"); return; }
+  showToast("Mouvement supprimé — stock corrigé.", "success");
+  await loadPiecesSelect();
+  loadHistorique();
 }
 
 document.getElementById("mvt-form").addEventListener("submit", async (e) => {
