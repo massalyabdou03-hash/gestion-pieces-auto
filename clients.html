@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Clients — Sylla Automobile — Ziguinchor</title>
+<link rel="icon" href="assets/img/sylla.ico">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -35,14 +36,26 @@
     </div>
 
     <div class="grid-stats">
-      <div class="stat-card"><div class="label">Clients enregistrés</div><div class="value" id="stat-total">—</div></div>
-      <div class="stat-card warn"><div class="label">Avec un bon impayé</div><div class="value" id="stat-impayes">—</div></div>
-      <div class="stat-card"><div class="label">Total facturé (validé)</div><div class="value" id="stat-total-facture">—</div></div>
+      <div class="stat-card">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+        <div class="stat-body"><div class="label">Clients enregistrés</div><div class="value" id="stat-total">—</div></div>
+      </div>
+      <div class="stat-card warn">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg></div>
+        <div class="stat-body"><div class="label">Avec un bon impayé</div><div class="value" id="stat-impayes">—</div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12v19l-3-2-3 2-3-2-3 2V2z"/><path d="M9 8h6M9 12h6"/></svg></div>
+        <div class="stat-body"><div class="label">Total facturé (validé)</div><div class="value" id="stat-total-facture">—</div></div>
+      </div>
     </div>
 
     <div class="card">
       <div class="toolbar" style="margin-bottom:16px;">
-        <input class="search-input" id="search" placeholder="Rechercher (nom, téléphone, email)...">
+        <div class="search-wrap">
+          <svg class="search-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input class="search-input" id="search" placeholder="Rechercher (nom, téléphone, email)...">
+        </div>
       </div>
       <div id="table-content">Chargement...</div>
     </div>

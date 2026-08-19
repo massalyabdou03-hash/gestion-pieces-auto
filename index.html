@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tableau de bord — Sylla Automobile — Ziguinchor</title>
+<link rel="icon" href="assets/img/sylla.ico">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -32,18 +33,30 @@
     </div>
 
     <div class="grid-stats">
-      <div class="stat-card"><div class="label">Pièces au catalogue</div><div class="value" id="stat-pieces">—</div></div>
       <div class="stat-card">
-        <div class="label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-          <span>Valeur du stock (achat)</span>
-          <button type="button" class="btn-icon" id="toggle-valeur-btn" title="Afficher/masquer" style="padding:2px;">
-            <svg class="icon" id="toggle-valeur-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        </div>
-        <div class="value" id="stat-valeur">—</div>
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg></div>
+        <div class="stat-body"><div class="label">Pièces au catalogue</div><div class="value" id="stat-pieces">—</div></div>
       </div>
-      <div class="stat-card warn"><div class="label">Alertes réappro</div><div class="value" id="stat-alertes">—</div></div>
-      <div class="stat-card"><div class="label">Factures validées (mois)</div><div class="value" id="stat-factures">—</div></div>
+      <div class="stat-card">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+        <div class="stat-body">
+          <div class="label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <span>Valeur du stock (achat)</span>
+            <button type="button" class="btn-icon" id="toggle-valeur-btn" title="Afficher/masquer" style="padding:2px;">
+              <svg class="icon" id="toggle-valeur-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+          <div class="value" id="stat-valeur">—</div>
+        </div>
+      </div>
+      <div class="stat-card warn">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 17h.01"/></svg></div>
+        <div class="stat-body"><div class="label">Alertes réappro</div><div class="value" id="stat-alertes">—</div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12v19l-3-2-3 2-3-2-3 2V2z"/><path d="M9 8h6M9 12h6"/></svg></div>
+        <div class="stat-body"><div class="label">Factures validées (mois)</div><div class="value" id="stat-factures">—</div></div>
+      </div>
     </div>
 
     <div class="card">
