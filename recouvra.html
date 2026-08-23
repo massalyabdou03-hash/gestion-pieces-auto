@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recouvra — Sylla Automobile — Ziguinchor</title>
+<link rel="icon" href="assets/img/sylla.ico">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="brand"><img src="assets/img/logo-sylla-icon.png" class="brand-logo" alt="Sylla Automobile"> Sylla Automobile <span class="brand-tag">Ziguinchor</span></div>
+    <a class="nav-link" href="index.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg> Tableau de bord</a>
+    <a class="nav-link" href="catalogue.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg> Catalogue</a>
+    <a class="nav-link" href="stock.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v18"/><path d="M4 7l4-4 4 4"/><path d="M16 21V3"/><path d="M20 17l-4 4-4-4"/></svg> Mouvements stock</a>
+    <a class="nav-link" href="rupture-stock.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 17h.01"/></svg> Ruptures de stock</a>
+    <a class="nav-link" href="factures.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12v19l-3-2-3 2-3-2-3 2V2z"/><path d="M9 8h6M9 12h6"/></svg> Factures</a>
+    <a class="nav-link" href="credits.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Emprunts</a>
+    <a class="nav-link" href="clients.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Clients</a>
+    <a class="nav-link active" href="recouvra.html"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10H7z"/><path d="M4 12h16M12 4v16"/></svg> Recouvra</a>
+    <div class="sidebar-footer">
+      <div class="hint mono" id="current-user-email" style="margin-bottom:8px;"></div>
+      <button class="btn-logout" onclick="logout()">Déconnexion</button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Recouvra</h1>
+        <div class="subtitle">Relance WhatsApp des bons à crédit impayés</div>
+      </div>
+    </div>
+
+    <div class="grid-stats">
+      <div class="stat-card danger">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+        <div class="stat-body"><div class="label">Total dû (non payé)</div><div class="value" id="stat-total">—</div></div>
+      </div>
+      <div class="stat-card danger">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+        <div class="stat-body"><div class="label">Bons en retard</div><div class="value" id="stat-retard">—</div></div>
+      </div>
+      <div class="stat-card warn">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
+        <div class="stat-body"><div class="label">À payer cette semaine</div><div class="value" id="stat-semaine">—</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Créances à relancer</h3>
+        <a href="credits.html" class="hint">Voir tous les emprunts →</a>
+      </div>
+      <div id="table-content">Chargement...</div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+let allCreances = [];
+
+// Reprend exactement la meme source de donnees que credits.html (bons a credit
+// valides, non payes) : Recouvra n'est qu'une vue de relance sur ces memes bons,
+// pas une deuxieme gestion des impayes.
+async function loadCreances() {
+  const { items, offline, savedAt } = await loadWithCache("recouvra_creances", () =>
+    supabaseClient
+      .from("factures")
+      .select("id, client_id, numero_facture, montant_total, created_at, echeance_type, date_echeance, paye, paye_at, clients(nom, telephone)")
+      .eq("mode_paiement", "CREDIT").eq("statut", "VALIDEE").eq("paye", false)
+      .order("date_echeance", { ascending: true })
+  );
+  allCreances = applyPendingFieldUpdates("factures", items).filter(f => !f.paye);
+  if (offline && savedAt) showToast(`Créances hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
+}
+
+function loadStats() {
+  const total = allCreances.reduce((s, f) => s + Number(f.montant_total), 0);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dansUneSemaine = new Date(today); dansUneSemaine.setDate(today.getDate() + 7);
+
+  let retard = 0, semaine = 0;
+  allCreances.forEach(f => {
+    if (!f.date_echeance) return;
+    const d = new Date(f.date_echeance);
+    if (d < today) retard++;
+    else if (d <= dansUneSemaine) semaine++;
+  });
+
+  document.getElementById("stat-total").textContent = fmtMoney(total);
+  document.getElementById("stat-retard").textContent = retard;
+  document.getElementById("stat-semaine").textContent = semaine;
+}
+
+function relancerWhatsApp(phone, nom, numero, montant) {
+  const normalized = (phone || "").replace(/[^0-9]/g, "");
+  if (!normalized) { showToast("Numéro de téléphone manquant pour ce client.", "error"); return; }
+  const message = `Bonjour ${nom}, sauf erreur de notre part, votre facture N°${numero} présente un solde de ${fmtMoney(montant)}. Merci de procéder au règlement dans les meilleurs délais.`;
+  window.open(`https://wa.me/${normalized}?text=${encodeURIComponent(message)}`, "_blank");
+}
+
+function renderCreances() {
+  const el = document.getElementById("table-content");
+  if (allCreances.length === 0) { el.innerHTML = `<div class="empty-state">Aucune créance ouverte — tous les bons à crédit sont payés.</div>`; return; }
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dansUneSemaine = new Date(today); dansUneSemaine.setDate(today.getDate() + 7);
+
+  el.innerHTML = `
+    <div class="table-wrapper">
+    <table>
+      <thead><tr><th>N° bon / Date</th><th>Client</th><th>Téléphone</th><th class="num">Reste à payer</th><th>Échéance</th><th>Statut</th><th></th></tr></thead>
+      <tbody>
+        ${allCreances.map(f => {
+          const echDate = f.date_echeance ? new Date(f.date_echeance) : null;
+          let statutLabel = "À venir", statutClass = "badge-info";
+          if (echDate && echDate < today) { statutLabel = "En retard"; statutClass = "badge-danger"; }
+          else if (echDate && echDate <= dansUneSemaine) { statutLabel = "Cette semaine"; statutClass = "badge-warn"; }
+          const nom = f.clients?.nom || "Client";
+          const numero = f.numero_facture || `#${f.id}`;
+          return `
+          <tr>
+            <td><span class="ref">${esc(numero)}</span><br><span class="hint">${fmtDate(f.created_at)}</span></td>
+            <td>${esc(nom)}</td>
+            <td class="hint">${esc(f.clients?.telephone || "—")}</td>
+            <td class="num"><strong>${fmtMoney(f.montant_total)}</strong></td>
+            <td class="hint">${fmtDate(f.date_echeance)}</td>
+            <td><span class="badge ${statutClass}">${statutLabel}</span></td>
+            <td class="actions-cell">
+              <button type="button" class="btn btn-sm" style="background:#25D366; border-color:#25D366;" onclick="relancerWhatsApp('${esc(f.clients?.telephone || "")}', '${esc(nom)}', '${esc(numero)}', ${Number(f.montant_total)})">💬 Relancer WhatsApp</button>
+            </td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+    </div>`;
+}
+
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+  await loadCreances();
+  loadStats();
+  renderCreances();
+  document.addEventListener("sylla:pending-updates-updated", async () => { await loadCreances(); loadStats(); renderCreances(); });
+})();
+</script>
+</body>
+</html>
