@@ -749,3 +749,58 @@ async function syncFieldUpdates() {
     document.dispatchEvent(new CustomEvent("sylla:pending-updates-updated"));
   }
 }
+
+function initGlobalNavigation() {
+  const currentPage = window.location.pathname.split("/").pop() || "index.html";
+  const links = [
+    { key: "home", label: "Accueil", href: "index.html", pages: ["index.html"] },
+    { key: "stock", label: "Stock", href: "stock.html", pages: ["stock.html", "catalogue.html", "rupture-stock.html"] },
+    { key: "invoices", label: "Factures", href: "factures.html", pages: ["factures.html", "facture-detail.html", "credits.html"] },
+    { key: "recouvra", label: "Recouvra", href: typeof RECOUVRA_URL === "string" ? RECOUVRA_URL : "https://melodic-kangaroo-4b0586.netlify.app/", pages: [] },
+    { key: "settings", label: "Paramètres", href: `${typeof RECOUVRA_URL === "string" ? RECOUVRA_URL : "https://melodic-kangaroo-4b0586.netlify.app/"}parametres.html`, pages: [] },
+  ];
+  const icons = {
+    home: '<path d="m3 10 9-7 9 7v10H3z"/><path d="M9 21v-6h6v6"/>',
+    stock: '<path d="m3 7 9-4 9 4-9 4z"/><path d="M3 7v10l9 4 9-4V7M12 11v10"/>',
+    invoices: '<path d="M6 2h12v19l-3-2-3 2-3-2-3 2V2z"/><path d="M9 8h6M9 12h6"/>',
+    recouvra: '<rect x="5" y="5" width="14" height="14" rx="2"/><path d="M8 12h8M12 8v8"/>',
+    settings: '<path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="3"/>',
+  };
+  const nav = document.createElement("nav");
+  nav.className = "global-nav";
+  nav.setAttribute("aria-label", "Navigation principale");
+  nav.innerHTML = `<div class="global-nav-brand"><img src="assets/img/logo-sylla-icon.png" alt="Entreprise"><span data-company-name>Gestion Stock & Recouvra</span></div><div class="global-nav-links">${links.map(link => `<a class="global-nav-link${link.pages.includes(currentPage) ? " active" : ""}" href="${link.href}" data-nav-key="${link.key}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icons[link.key]}</svg><span>${link.label}</span></a>`).join("")}</div><div class="global-nav-footer"><span id="current-user-email" class="global-nav-user"></span><button type="button" class="btn-logout" onclick="logout()">Déconnexion</button></div>`;
+  document.querySelector(".sidebar")?.replaceWith(nav);
+  nav.querySelector('[data-nav-key="recouvra"]')?.addEventListener("click", handleRecouvraNavigation);
+}
+
+async function handleRecouvraNavigation(event) {
+  event.preventDefault();
+  const { data: userData } = await supabaseClient.auth.getUser();
+  if (!userData.user) { window.location.href = "login.html"; return; }
+  const { data: profile } = await supabaseClient.from("profiles").select("id,entreprise_id,has_recouvra").eq("id", userData.user.id).maybeSingle();
+  if (profile?.has_recouvra) { window.location.href = `${RECOUVRA_URL}recouvra.html`; return; }
+
+  const existing = document.getElementById("premium-access-modal");
+  if (existing) return;
+  const modal = document.createElement("div");
+  modal.id = "premium-access-modal";
+  modal.className = "premium-access-modal";
+  modal.innerHTML = `<div class="premium-access-dialog" role="dialog" aria-modal="true" aria-labelledby="premium-access-title"><button type="button" class="premium-access-close" aria-label="Fermer">×</button><span class="eyebrow">Module Premium</span><h2 id="premium-access-title">Activez Recouvra</h2><p>Suivez les créances, enregistrez les paiements et relancez vos clients depuis la même plateforme.</p><button type="button" class="button" data-premium-request>Demander l'activation</button><p class="premium-access-message" aria-live="polite"></p></div>`;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector(".premium-access-close").addEventListener("click", close);
+  modal.addEventListener("click", event => { if (event.target === modal) close(); });
+  modal.querySelector("[data-premium-request]").addEventListener("click", async () => {
+    const button = modal.querySelector("[data-premium-request]");
+    const message = modal.querySelector(".premium-access-message");
+    button.disabled = true;
+    const { error } = await supabaseClient.from("recouvra_activation_requests").insert({ entreprise_id: profile?.entreprise_id, requested_by: userData.user.id });
+    message.textContent = error ? "La demande n'a pas pu être envoyée." : "Demande envoyée. Votre administrateur doit valider l'activation.";
+    button.textContent = error ? "Réessayer" : "Demande envoyée";
+    button.disabled = false;
+  });
+}
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initGlobalNavigation);
+else initGlobalNavigation();
