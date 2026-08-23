@@ -40,8 +40,6 @@
 const params = new URLSearchParams(window.location.search);
 const factureId = params.get("id");
 
-const modePaiementLabel = { ESPECES: "Espèces", CARTE: "Carte", VIREMENT: "Virement", CHEQUE: "Chèque", CREDIT: "Crédit (bon)" };
-
 function onModePaiementChange() {
   const isCredit = document.getElementById("mode_paiement").value === "CREDIT";
   document.getElementById("echeance-field").style.display = isCredit ? "block" : "none";
@@ -104,7 +102,7 @@ async function loadFacture() {
         </div>
         <div>
           <label style="margin-top:0;">Mode de paiement</label>
-          <div>${modePaiementLabel[facture.mode_paiement] || facture.mode_paiement || "—"}</div>
+          <div>${MODE_PAIEMENT_LABELS[facture.mode_paiement] || facture.mode_paiement || "—"}</div>
         </div>
       </div>
 
@@ -151,6 +149,8 @@ async function loadFacture() {
             <option value="ESPECES">Espèces</option>
             <option value="CARTE">Carte</option>
             <option value="VIREMENT">Virement</option>
+            <option value="WAVE">Wave</option>
+            <option value="OM">Orange Money</option>
             <option value="CHEQUE">Chèque</option>
             <option value="CREDIT">Crédit (bon — le client paie plus tard)</option>
           </select>

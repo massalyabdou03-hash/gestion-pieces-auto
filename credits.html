@@ -56,6 +56,10 @@
           <button type="button" class="btn btn-secondary btn-sm" id="tab-tous" onclick="setFilter('tous')">Tous</button>
         </div>
       </div>
+      <div class="toolbar" id="bulk-toolbar" style="margin-bottom:16px; display:none;">
+        <button type="button" class="btn btn-sm" id="bulk-pay-btn" onclick="marquerSelectionPayee()">Marquer payé (<span id="bulk-count">0</span>)</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="clearSelection()">Annuler la sélection</button>
+      </div>
       <div id="table-content">Chargement...</div>
     </div>
   </main>
@@ -68,12 +72,42 @@
 let currentFilter = "impayes";
 let allCredits = [];
 
+let selectedIds = new Set();
+
 function setFilter(filter) {
   currentFilter = filter;
   ["impayes", "retard", "tous"].forEach(f => {
     document.getElementById(`tab-${f}`).className = f === filter ? "btn btn-sm" : "btn btn-secondary btn-sm";
   });
+  clearSelection();
+}
+
+function clearSelection() {
+  selectedIds.clear();
   renderEmprunts();
+}
+
+function toggleSelect(id, checked) {
+  if (checked) selectedIds.add(id); else selectedIds.delete(id);
+  updateBulkToolbar();
+  // Coche/décoche aussi la case "tout sélectionner" du groupe client concerné, sans
+  // redessiner tout le tableau (perdrait le focus et re-scrollerait la page).
+  document.querySelectorAll(".group-select-all").forEach(cb => {
+    const groupIds = cb.dataset.ids.split(",").filter(Boolean).map(Number);
+    cb.checked = groupIds.length > 0 && groupIds.every(gid => selectedIds.has(gid));
+  });
+}
+
+function toggleSelectGroup(idsCsv, checked) {
+  const ids = idsCsv.split(",").filter(Boolean).map(Number);
+  ids.forEach(id => { if (checked) selectedIds.add(id); else selectedIds.delete(id); });
+  renderEmprunts();
+}
+
+function updateBulkToolbar() {
+  const count = selectedIds.size;
+  document.getElementById("bulk-toolbar").style.display = count > 0 ? "flex" : "none";
+  document.getElementById("bulk-count").textContent = count;
 }
 
 // Une seule requête large (tous les bons à crédit validés), mise en cache pour l'usage
@@ -83,7 +117,7 @@ async function loadCreditsData() {
   const { items, offline, savedAt } = await loadWithCache("credits", () =>
     supabaseClient
       .from("factures")
-      .select("id, numero_facture, montant_total, created_at, echeance_type, date_echeance, paye, paye_at, clients(nom, telephone)")
+      .select("id, client_id, numero_facture, montant_total, created_at, echeance_type, date_echeance, paye, paye_at, clients(nom, telephone)")
       .eq("mode_paiement", "CREDIT").eq("statut", "VALIDEE")
       .order("date_echeance", { ascending: true })
   );
@@ -119,40 +153,66 @@ function renderEmprunts() {
   if (currentFilter === "impayes") data = data.filter(f => !f.paye);
   if (currentFilter === "retard") data = data.filter(f => !f.paye && f.date_echeance && f.date_echeance < todayStr);
 
+  updateBulkToolbar();
+
   if (data.length === 0) { el.innerHTML = `<div class="empty-state">Aucun bon à afficher pour ce filtre.</div>`; return; }
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const dansUneSemaine = new Date(today); dansUneSemaine.setDate(today.getDate() + 7);
+
+  // Regroupe par client (les bons sont déjà triés par échéance croissante, donc les
+  // groupes apparaissent dans l'ordre du client ayant le bon le plus urgent en premier).
+  const groups = new Map();
+  data.forEach(f => {
+    const key = f.client_id ?? f.clients?.nom ?? "—";
+    if (!groups.has(key)) groups.set(key, { nom: f.clients?.nom || "—", telephone: f.clients?.telephone || "", rows: [] });
+    groups.get(key).rows.push(f);
+  });
 
   el.innerHTML = `
     <div class="table-wrapper">
     <table>
       <thead>
         <tr>
-          <th>Client</th><th>Téléphone</th><th>N° bon</th><th class="num">Montant</th>
+          <th></th><th>Client</th><th>Téléphone</th><th>N° bon</th><th class="num">Montant</th>
           <th>Vendu le</th><th>Échéance</th><th>Date limite</th><th>Statut</th><th></th>
         </tr>
       </thead>
       <tbody>
-        ${data.map(f => {
-          const echDate = f.date_echeance ? new Date(f.date_echeance) : null;
-          let statutLabel = "À venir", statutClass = "badge-info";
-          if (f.paye) { statutLabel = "Payé"; statutClass = "badge-success"; }
-          else if (echDate && echDate < today) { statutLabel = "En retard"; statutClass = "badge-danger"; }
-          else if (echDate && echDate <= dansUneSemaine) { statutLabel = "Cette semaine"; statutClass = "badge-warn"; }
+        ${[...groups.values()].map(g => {
+          const totalDu = g.rows.filter(f => !f.paye).reduce((s, f) => s + Number(f.montant_total), 0);
+          const unpaidIds = g.rows.filter(f => !f.paye).map(f => f.id);
+          const idsCsv = unpaidIds.join(",");
+          const allSelected = unpaidIds.length > 0 && unpaidIds.every(id => selectedIds.has(id));
 
           return `
-          <tr style="cursor:pointer;" onclick="window.location.href='facture-detail.html?id=${f.id}'">
-            <td>${esc(f.clients?.nom || "—")}</td>
-            <td class="hint">${esc(f.clients?.telephone || "—")}</td>
-            <td class="ref">${esc(f.numero_facture || "—")}</td>
-            <td class="num">${fmtMoney(f.montant_total)}</td>
-            <td class="hint">${fmtDate(f.created_at)}</td>
-            <td><span class="badge badge-muted">${f.echeance_type === "SEMAINE" ? "Sous 1 semaine" : "Sous 1 mois"}</span></td>
-            <td class="hint">${fmtDate(f.date_echeance)}</td>
-            <td><span class="badge ${statutClass}">${statutLabel}</span> ${f._pendingSync ? '<span class="badge badge-info">Sync en attente</span>' : ""}</td>
-            <td>${f.paye ? "" : `<button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); marquerPaye(${f.id})">Marquer payé</button>`}</td>
-          </tr>`;
+          <tr class="table-group-row">
+            <td>${unpaidIds.length > 0 ? `<input type="checkbox" class="group-select-all" data-ids="${idsCsv}" ${allSelected ? "checked" : ""} onchange="toggleSelectGroup('${idsCsv}', this.checked)">` : ""}</td>
+            <td colspan="8">${esc(g.nom)}${g.telephone ? ` <span style="text-transform:none; font-weight:400;">— ${esc(g.telephone)}</span>` : ""}</td>
+            <td class="num">${totalDu > 0 ? fmtMoney(totalDu) + " dû" : ""}</td>
+          </tr>
+          ${g.rows.map(f => {
+            const echDate = f.date_echeance ? new Date(f.date_echeance) : null;
+            let statutLabel = "À venir", statutClass = "badge-info";
+            if (f.paye) { statutLabel = "Payé"; statutClass = "badge-success"; }
+            else if (echDate && echDate < today) { statutLabel = "En retard"; statutClass = "badge-danger"; }
+            else if (echDate && echDate <= dansUneSemaine) { statutLabel = "Cette semaine"; statutClass = "badge-warn"; }
+
+            return `
+            <tr style="cursor:pointer;" onclick="window.location.href='facture-detail.html?id=${f.id}'">
+              <td onclick="event.stopPropagation();">${f.paye ? "" : `<input type="checkbox" ${selectedIds.has(f.id) ? "checked" : ""} onchange="toggleSelect(${f.id}, this.checked)">`}</td>
+              <td></td>
+              <td class="hint"></td>
+              <td class="ref">${esc(f.numero_facture || "—")}</td>
+              <td class="num">${fmtMoney(f.montant_total)}</td>
+              <td class="hint">${fmtDate(f.created_at)}</td>
+              <td><span class="badge badge-muted">${f.echeance_type === "SEMAINE" ? "Sous 1 semaine" : "Sous 1 mois"}</span></td>
+              <td class="hint">${fmtDate(f.date_echeance)}</td>
+              <td><span class="badge ${statutClass}">${statutLabel}</span> ${f._pendingSync ? '<span class="badge badge-info">Sync en attente</span>' : ""}</td>
+              <td>${f.paye ? "" : `<button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); marquerPaye(${f.id})">Marquer payé</button>`}</td>
+            </tr>`;
+          }).join("")}
+          `;
         }).join("")}
       </tbody>
     </table>
@@ -179,6 +239,38 @@ async function marquerPaye(id) {
 
   if (error) { showToast(friendlyError(error), "error"); return; }
   showToast("Bon marqué comme payé.", "success");
+  await loadCreditsData();
+  loadStats();
+  renderEmprunts();
+}
+
+async function marquerSelectionPayee() {
+  const ids = [...selectedIds];
+  if (ids.length === 0) return;
+
+  const ok = await confirmDialog(`Marquer ${ids.length} bon(s) comme payé(s) ?`, { confirmLabel: "Marquer payés", danger: false });
+  if (!ok) return;
+
+  const patch = { paye: true, paye_at: new Date().toISOString() };
+
+  if (!appIsOnline) {
+    ids.forEach(id => {
+      queueFieldUpdate("factures", id, patch, `Bon #${id} marqué payé`);
+      const item = allCredits.find(f => f.id === id);
+      if (item) Object.assign(item, patch, { _pendingSync: true });
+    });
+    showToast("Marqués payés hors ligne — synchronisés automatiquement au retour de la connexion.", "info");
+    selectedIds.clear();
+    loadStats();
+    renderEmprunts();
+    return;
+  }
+
+  const { error } = await supabaseClient.from("factures").update(patch).in("id", ids);
+
+  if (error) { showToast(friendlyError(error), "error"); return; }
+  showToast(`${ids.length} bon(s) marqué(s) comme payé(s).`, "success");
+  selectedIds.clear();
   await loadCreditsData();
   loadStats();
   renderEmprunts();

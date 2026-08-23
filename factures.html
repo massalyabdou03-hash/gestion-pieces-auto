@@ -57,6 +57,8 @@
               <option value="ESPECES">Espèces</option>
               <option value="CARTE">Carte</option>
               <option value="VIREMENT">Virement</option>
+              <option value="WAVE">Wave</option>
+              <option value="OM">Orange Money</option>
               <option value="CHEQUE">Chèque</option>
               <option value="CREDIT">Crédit (bon — le client paie plus tard)</option>
             </select>
@@ -92,6 +94,9 @@
 
     <div class="card">
       <div class="card-head"><h3>Historique</h3></div>
+      <div class="toolbar" style="margin-bottom:16px;">
+        <input class="search-input" id="historique-search" placeholder="Rechercher (client, n° facture)..." oninput="renderFacturesList()">
+      </div>
       <div id="table-content">Chargement...</div>
     </div>
   </main>
@@ -474,8 +479,9 @@ document.getElementById("quick-client-form").addEventListener("submit", async (e
   closeQuickClient();
 });
 
+let facturesList = [];
+
 async function loadFactures() {
-  const el = document.getElementById("table-content");
   const { items, offline, savedAt } = await loadWithCache("factures", () =>
     supabaseClient
       .from("factures").select("id, numero_facture, statut, montant_total, mode_paiement, created_at, clients(nom)")
@@ -484,22 +490,50 @@ async function loadFactures() {
   );
 
   if (offline && savedAt) showToast(`Historique hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
-  if (items.length === 0) { el.innerHTML = `<div class="empty-state">Aucune facture pour le moment.</div>`; return; }
+  facturesList = items;
+  renderFacturesList();
+}
+
+function renderFacturesList() {
+  const el = document.getElementById("table-content");
+  if (facturesList.length === 0) { el.innerHTML = `<div class="empty-state">Aucune facture pour le moment.</div>`; return; }
+
+  const q = (document.getElementById("historique-search")?.value || "").trim().toLowerCase();
+  const items = q ? facturesList.filter(f =>
+    (f.clients?.nom || "").toLowerCase().includes(q) ||
+    (f.numero_facture || "").toLowerCase().includes(q)
+  ) : facturesList;
+
+  if (items.length === 0) { el.innerHTML = `<div class="empty-state">Aucun résultat pour cette recherche.</div>`; return; }
 
   const badgeClass = { BROUILLON: "badge-muted", VALIDEE: "badge-success", ANNULEE: "badge-danger" };
 
+  // Regroupe par jour (les factures sont déjà triées du plus récent au plus ancien) :
+  // c'est ce qui sert le mieux la lecture au quotidien (caisse, clôture du jour), la
+  // recherche ci-dessus couvrant déjà le besoin de retrouver un client précis.
+  const groups = [];
+  let currentKey = null;
+  for (const f of items) {
+    const key = fmtDate(f.created_at);
+    if (key !== currentKey) { groups.push({ key, rows: [] }); currentKey = key; }
+    groups[groups.length - 1].rows.push(f);
+  }
+
   el.innerHTML = `
     <table>
-      <thead><tr><th>N° facture</th><th>Client</th><th>Statut</th><th class="num">Montant</th><th>Date</th></tr></thead>
+      <thead><tr><th>N° facture</th><th>Client</th><th>Statut</th><th>Paiement</th><th class="num">Montant</th></tr></thead>
       <tbody>
-        ${items.map(f => `
-          <tr style="cursor:pointer;" onclick="window.location.href='facture-detail.html?id=${f.id}'">
-            <td class="ref">${esc(f.numero_facture || "brouillon-" + f.id)}</td>
-            <td>${esc(f.clients?.nom || "—")}</td>
-            <td><span class="badge ${badgeClass[f.statut]}">${f.statut}</span></td>
-            <td class="num">${fmtMoney(f.montant_total)}</td>
-            <td class="hint">${fmtDate(f.created_at)}</td>
-          </tr>`).join("")}
+        ${groups.map(g => `
+          <tr class="table-group-row"><td colspan="5">${g.key}</td></tr>
+          ${g.rows.map(f => `
+            <tr style="cursor:pointer;" onclick="window.location.href='facture-detail.html?id=${f.id}'">
+              <td class="ref">${esc(f.numero_facture || "brouillon-" + f.id)}</td>
+              <td>${esc(f.clients?.nom || "—")}</td>
+              <td><span class="badge ${badgeClass[f.statut]}">${f.statut}</span></td>
+              <td class="hint">${f.mode_paiement ? esc(MODE_PAIEMENT_LABELS[f.mode_paiement] || f.mode_paiement) : "—"}</td>
+              <td class="num">${fmtMoney(f.montant_total)}</td>
+            </tr>`).join("")}
+        `).join("")}
       </tbody>
     </table>`;
 }

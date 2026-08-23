@@ -83,6 +83,11 @@ async function fetchAllRows(queryBuilder, pageSize = 1000) {
   return { data: rows, error: null };
 }
 
+const MODE_PAIEMENT_LABELS = {
+  ESPECES: "Espèces", CARTE: "Carte", VIREMENT: "Virement",
+  WAVE: "Wave", OM: "Orange Money", CHEQUE: "Chèque", CREDIT: "Crédit (bon)",
+};
+
 function fmtMoney(n) {
   const v = Number(n || 0);
   return v.toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + " F";
