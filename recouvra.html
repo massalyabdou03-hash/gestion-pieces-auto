@@ -33,27 +33,66 @@
       </div>
     </div>
 
-    <div class="grid-stats">
-      <div class="stat-card danger">
-        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
-        <div class="stat-body"><div class="label">Total dû (non payé)</div><div class="value" id="stat-total">—</div></div>
-      </div>
-      <div class="stat-card danger">
-        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
-        <div class="stat-body"><div class="label">Bons en retard</div><div class="value" id="stat-retard">—</div></div>
-      </div>
-      <div class="stat-card warn">
-        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
-        <div class="stat-body"><div class="label">À payer cette semaine</div><div class="value" id="stat-semaine">—</div></div>
+    <!-- Ecran de souscription : affiche tant que recouvra_abonnement.actif = false -->
+    <div id="recouvra-paywall" style="display:none;">
+      <div class="card" style="max-width:720px; margin:0 auto;">
+        <span class="badge badge-warn">Extension Premium</span>
+        <h2 style="margin-top:14px;">⚡ Activez l'extension Recouvra pour Sylla Automobile</h2>
+        <p class="hint" style="font-size:0.95rem; margin-top:8px;" id="paywall-pitch">Récupérez vos créances bloquées en automatisant vos relances clients sur WhatsApp.</p>
+
+        <ul style="margin:20px 0; padding-left:20px; line-height:1.9;">
+          <li>Relance 1-clic pré-remplie avec le montant et l'échéance</li>
+          <li>Suivi des promesses de règlement de vos clients</li>
+          <li>Zéro oubli sur les bons à crédit arrivés à échéance</li>
+        </ul>
+
+        <div style="display:flex; align-items:baseline; gap:8px; margin:18px 0; padding-top:18px; border-top:1px solid var(--border-soft);">
+          <strong style="font-family:var(--font-display); font-size:1.6rem;">15 000 FCFA</strong>
+          <span class="hint">/ mois, sans engagement</span>
+        </div>
+
+        <div class="card" style="background:var(--surface-2); box-shadow:none;">
+          <strong>Paiement Wave Sénégal</strong>
+          <p class="hint" style="margin-top:6px;">Effectuez votre transfert de 15 000 F au <strong>77 033 80 30</strong> via Wave, puis complétez ce formulaire.</p>
+        </div>
+
+        <form id="paywall-form" style="margin-top:18px;">
+          <label>Référence / ID Transaction Wave<input id="wave-reference" type="text" maxlength="120" required placeholder="Ex : TXN-123456"></label>
+          <label>Capture d'écran du reçu Wave<input id="wave-proof" type="file" accept="image/jpeg,image/png,application/pdf" required></label>
+          <label class="hint" style="display:flex; align-items:center; gap:8px; margin-top:14px;">
+            <input id="wave-cgu" type="checkbox" required style="width:auto; margin:0;">
+            J'accepte les CGU
+          </label>
+          <button type="submit" class="btn" style="margin-top:16px;" id="paywall-submit">Envoyer la preuve de paiement pour activation</button>
+          <p id="paywall-message" class="hint" style="margin-top:10px;"></p>
+        </form>
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-head">
-        <h3>Créances à relancer</h3>
-        <a href="credits.html" class="hint">Voir tous les emprunts →</a>
+    <!-- Tableau des creances : affiche uniquement si recouvra_abonnement.actif = true -->
+    <div id="recouvra-content" style="display:none;">
+      <div class="grid-stats">
+        <div class="stat-card danger">
+          <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+          <div class="stat-body"><div class="label">Total dû (non payé)</div><div class="value" id="stat-total">—</div></div>
+        </div>
+        <div class="stat-card danger">
+          <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+          <div class="stat-body"><div class="label">Bons en retard</div><div class="value" id="stat-retard">—</div></div>
+        </div>
+        <div class="stat-card warn">
+          <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
+          <div class="stat-body"><div class="label">À payer cette semaine</div><div class="value" id="stat-semaine">—</div></div>
+        </div>
       </div>
-      <div id="table-content">Chargement...</div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>Créances à relancer</h3>
+          <a href="credits.html" class="hint">Voir tous les emprunts →</a>
+        </div>
+        <div id="table-content">Chargement...</div>
+      </div>
     </div>
   </main>
 </div>
@@ -141,13 +180,65 @@ function renderCreances() {
     </div>`;
 }
 
-(async () => {
-  const session = await requireAuth();
-  if (!session) return;
+async function afficherPaywall() {
+  document.getElementById("recouvra-paywall").style.display = "block";
+
+  // Le montant du pitch reste dynamique (donnees reelles), pas fige en dur.
+  const { data } = await supabaseClient
+    .from("factures").select("montant_total")
+    .eq("mode_paiement", "CREDIT").eq("statut", "VALIDEE").eq("paye", false);
+  const total = (data || []).reduce((s, f) => s + Number(f.montant_total), 0);
+  document.getElementById("paywall-pitch").textContent = total > 0
+    ? `Récupérez vos ${fmtMoney(total)} de créances bloquées en automatisant vos relances clients sur WhatsApp.`
+    : `Récupérez vos créances bloquées en automatisant vos relances clients sur WhatsApp.`;
+
+  document.getElementById("paywall-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msgEl = document.getElementById("paywall-message");
+    const btn = document.getElementById("paywall-submit");
+    const file = document.getElementById("wave-proof").files[0];
+    const reference = document.getElementById("wave-reference").value.trim();
+    if (!file || !reference) { msgEl.textContent = "Renseigne la référence et la capture d'écran."; return; }
+
+    btn.disabled = true; btn.textContent = "Envoi...";
+    const extension = file.name.split(".").pop().toLowerCase();
+    const path = `preuve-${Date.now()}.${extension}`;
+    const upload = await supabaseClient.storage.from("recouvra-preuves").upload(path, file, { upsert: false, contentType: file.type });
+    if (upload.error) { msgEl.textContent = upload.error.message; btn.disabled = false; btn.textContent = "Envoyer la preuve de paiement pour activation"; return; }
+
+    const { error } = await supabaseClient.from("recouvra_abonnement").update({
+      reference_wave: reference,
+      preuve_paiement_path: path,
+      demande_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq("id", true);
+
+    btn.disabled = false;
+    if (error) { msgEl.textContent = friendlyError(error); btn.textContent = "Envoyer la preuve de paiement pour activation"; return; }
+    btn.textContent = "Demande envoyée";
+    msgEl.textContent = "Preuve envoyée. L'activation sera faite après vérification du paiement.";
+  });
+}
+
+async function afficherCreances() {
+  document.getElementById("recouvra-content").style.display = "block";
   await loadCreances();
   loadStats();
   renderCreances();
   document.addEventListener("sylla:pending-updates-updated", async () => { await loadCreances(); loadStats(); renderCreances(); });
+}
+
+(async () => {
+  const session = await requireAuth();
+  if (!session) return;
+
+  const { data: abonnement } = await supabaseClient.from("recouvra_abonnement").select("actif").eq("id", true).maybeSingle();
+
+  if (abonnement?.actif) {
+    await afficherCreances();
+  } else {
+    await afficherPaywall();
+  }
 })();
 </script>
 </body>
