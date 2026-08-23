@@ -202,6 +202,13 @@ tbody tr:hover{ background: var(--surface-2); }
 }
 .table-group-row:hover td{ background: var(--surface-2); }
 
+/* Regroupement par date de l'Historique des factures : ligne pleine en orange accent
+   pour bien séparer visuellement les ventes d'une journée de celles des autres jours. */
+.table-group-date td{
+  background: var(--accent); color:#1a0f04; font-weight:700;
+}
+.table-group-date:hover td{ background: var(--accent); }
+
 .badge{ display:inline-block; padding:3px 10px; border-radius:20px; font-size:0.72rem; font-weight:600; letter-spacing:0.02em;}
 .badge-warn{ background:var(--warn-dim); color:var(--warn-hi);}
 .badge-danger{ background:var(--danger-dim); color:var(--danger-hi);}

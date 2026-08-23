@@ -524,7 +524,7 @@ function renderFacturesList() {
       <thead><tr><th>N° facture</th><th>Client</th><th>Statut</th><th>Paiement</th><th class="num">Montant</th></tr></thead>
       <tbody>
         ${groups.map(g => `
-          <tr class="table-group-row"><td colspan="5">${g.key}</td></tr>
+          <tr class="table-group-row table-group-date"><td colspan="5">${g.key}</td></tr>
           ${g.rows.map(f => `
             <tr style="cursor:pointer;" onclick="window.location.href='facture-detail.html?id=${f.id}'">
               <td class="ref">${esc(f.numero_facture || "brouillon-" + f.id)}</td>
