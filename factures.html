@@ -32,7 +32,8 @@
     </div>
 
     <div class="card" id="new-facture-card" style="display:none;">
-      <h3>Nouvelle facture (brouillon)</h3>
+      <h3 id="form-title">Nouvelle facture (brouillon)</h3>
+      <div id="edit-hint" class="info-msg" style="display:none; margin-bottom:12px;"></div>
       <label>Client *</label>
       <div class="input-with-action" id="client-select-row">
         <select id="client_id" required onchange="updateOfflineFieldsVisibility()"><option value="">Sélectionner un client...</option></select>
@@ -131,10 +132,14 @@ let piecesList = [];
 let ligneCounter = 0;
 let ligneWidgets = {}; // id de ligne -> instance du champ de recherche de pièce (initPieceSearch)
 let pendingNewClients = {}; // clients créés hors ligne, en attente d'un vrai id Supabase
+// Non nul quand le formulaire sert à modifier un brouillon ({kind:"draft"}) ou à corriger
+// une facture validée ({kind:"corriger"}) au lieu de créer une facture neuve.
+let editMode = null;
 
 function toggleNewForm() {
   const card = document.getElementById("new-facture-card");
   const isOpen = card.style.display !== "none";
+  if (isOpen && editMode) { resetFactureForm(); return; }
   card.style.display = isOpen ? "none" : "block";
   if (!isOpen) {
     if (document.getElementById("lignes-body").children.length === 0) addLigne();
@@ -161,6 +166,12 @@ function openNewFormWithPiece(piece) {
 }
 
 function updateOfflineFieldsVisibility() {
+  if (editMode) {
+    document.getElementById("offline-payment-fields").style.display = "none";
+    document.getElementById("save-facture-btn").textContent =
+      editMode.kind === "draft" ? "Enregistrer les modifications" : "Créer la facture corrigée";
+    return;
+  }
   // Un client créé hors ligne doit passer par la file d'attente même si la connexion
   // est revenue entre-temps (il n'a pas encore de vrai id Supabase).
   const clientId = document.getElementById("client_id").value;
@@ -270,6 +281,7 @@ async function saveFacture() {
   }
 
   const total = lignes.reduce((s, l) => s + l.montant, 0);
+  if (editMode) { await saveEdit(clientIdRaw, lignes, total, msgEl); return; }
   const isDraftClient = clientIdRaw.startsWith("new-");
   const isComptoir = document.getElementById("vente-comptoir-check").checked;
 
@@ -356,6 +368,111 @@ async function saveFacture() {
   window.location.href = `facture-detail.html?id=${facture.id}`;
 }
 
+// Ouvre le formulaire pour modifier un brouillon (kind = "draft") ou pour corriger une facture
+// validée (kind = "corriger") : dans ce second cas rien n'est annulé tout de suite, l'ancienne
+// facture n'est annulée qu'au moment d'enregistrer la nouvelle.
+async function startEdit(kind, id) {
+  if (!appIsOnline) { showToast("Connexion requise pour modifier une facture.", "error"); return; }
+  const { data: f, error } = await supabaseClient
+    .from("factures").select("id, numero_facture, statut, client_id").eq("id", id).single();
+  if (error || !f) { showToast("Facture introuvable.", "error"); return; }
+  if (kind === "draft" && f.statut !== "BROUILLON") { showToast("Seul un brouillon peut être modifié. Utilise « Corriger » pour une facture validée.", "error"); return; }
+  if (kind === "corriger" && f.statut !== "VALIDEE") { showToast("Seule une facture validée peut être corrigée.", "error"); return; }
+
+  const { data: lignes, error: errL } = await supabaseClient
+    .from("factures_lignes").select("id, piece_id, designation, quantite, prix_unitaire").eq("facture_id", id).order("id");
+  if (errL || !lignes || lignes.length === 0) { showToast("Impossible de relire les lignes de cette facture.", "error"); return; }
+
+  editMode = { kind, id: f.id, numero: f.numero_facture, oldLineIds: lignes.map(l => l.id) };
+
+  document.getElementById("new-facture-card").style.display = "block";
+  document.getElementById("vente-comptoir-check").checked = false;
+  document.getElementById("client-select-row").style.display = "flex";
+  document.getElementById("vente-comptoir-check").closest("label").style.display = "none";
+  document.getElementById("client_id").value = String(f.client_id);
+
+  document.getElementById("lignes-body").innerHTML = "";
+  ligneWidgets = {};
+  for (const l of lignes) {
+    addLigne();
+    const rowId = ligneCounter;
+    const piece = piecesList.find(p => p.id === l.piece_id)
+      || { id: l.piece_id, designation: l.designation, reference_oem: "pièce archivée", prix_vente: l.prix_unitaire, quantite_stock: 0 };
+    ligneWidgets[rowId].setSelected(piece);
+    const tr = document.getElementById(`ligne-${rowId}`);
+    tr.querySelector(".ligne-qte").value = l.quantite;
+    tr.querySelector(".ligne-prix").value = l.prix_unitaire;
+    recalcLigne(rowId);
+  }
+
+  const hint = document.getElementById("edit-hint");
+  if (kind === "draft") {
+    document.getElementById("form-title").textContent = "Modifier le brouillon";
+    hint.textContent = "Change le client, les pièces, les quantités ou les prix, puis enregistre. Le stock ne bouge qu'à la validation.";
+  } else {
+    document.getElementById("form-title").textContent = `Corriger la facture ${f.numero_facture || "#" + f.id}`;
+    hint.textContent = `Corrige ce qu'il faut puis enregistre : un nouveau brouillon est créé et la facture ${f.numero_facture || "#" + f.id} est annulée (ses pièces sont remises en stock). Il restera à valider le nouveau brouillon.`;
+  }
+  hint.style.display = "block";
+  updateOfflineFieldsVisibility();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function saveEdit(clientIdRaw, lignes, total, msgEl) {
+  if (!appIsOnline) { showMsg(msgEl, "Connexion requise pour enregistrer cette modification."); return; }
+  if (clientIdRaw.startsWith("new-")) { showMsg(msgEl, "Ce client n'est pas encore enregistré : réessaie quand la synchronisation est terminée."); return; }
+
+  const em = editMode;
+  const clientId = Number(clientIdRaw);
+  const btn = document.getElementById("save-facture-btn");
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Enregistrement...";
+  const restore = () => { btn.disabled = false; btn.textContent = label; };
+
+  if (em.kind === "draft") {
+    // On ajoute les nouvelles lignes AVANT de retirer les anciennes : en cas d'échec le brouillon reste intact.
+    const { data: ajoutees, error: errIns } = await supabaseClient
+      .from("factures_lignes").insert(lignes.map(l => ({ ...l, facture_id: em.id }))).select("id");
+    if (errIns) { restore(); showMsg(msgEl, friendlyError(errIns)); return; }
+
+    const { error: errDel } = await supabaseClient.from("factures_lignes").delete().in("id", em.oldLineIds);
+    if (errDel) {
+      await supabaseClient.from("factures_lignes").delete().in("id", (ajoutees || []).map(x => x.id));
+      restore(); showMsg(msgEl, friendlyError(errDel)); return;
+    }
+
+    const { error: errUp } = await supabaseClient
+      .from("factures").update({ client_id: clientId, montant_total: total }).eq("id", em.id).eq("statut", "BROUILLON");
+    if (errUp) { restore(); showMsg(msgEl, "Les lignes sont enregistrées mais le client n'a pas pu être changé : " + friendlyError(errUp)); return; }
+
+    window.location.href = `facture-detail.html?id=${em.id}`;
+    return;
+  }
+
+  // Correction d'une facture validée : 1) nouveau brouillon, 2) annulation de l'ancienne.
+  const { data: nouvelle, error: errF } = await supabaseClient
+    .from("factures").insert({ client_id: clientId, montant_total: total }).select().single();
+  if (errF) { restore(); showMsg(msgEl, friendlyError(errF)); return; }
+
+  const { error: errL } = await supabaseClient
+    .from("factures_lignes").insert(lignes.map(l => ({ ...l, facture_id: nouvelle.id })));
+  if (errL) {
+    await supabaseClient.from("factures").delete().eq("id", nouvelle.id).eq("statut", "BROUILLON");
+    restore(); showMsg(msgEl, friendlyError(errL)); return;
+  }
+
+  const { error: errAnn } = await supabaseClient.rpc("annuler_facture", { p_facture_id: em.id });
+  if (errAnn) {
+    await supabaseClient.from("factures").delete().eq("id", nouvelle.id).eq("statut", "BROUILLON");
+    restore();
+    showMsg(msgEl, "L'ancienne facture n'a pas pu être annulée, rien n'a été modifié : " + friendlyError(errAnn));
+    return;
+  }
+
+  showToast(`Facture ${em.numero || "#" + em.id} annulée (stock remis). Valide maintenant le nouveau brouillon.`, "success");
+  window.location.href = `facture-detail.html?id=${nouvelle.id}`;
+}
+
 async function loadPieces() {
   const { items, offline, savedAt } = await loadWithCache("pieces", () =>
     fetchAllRows(() => supabaseClient.from("pieces").select("*").eq("actif", true).order("designation").order("id"))
@@ -414,6 +531,10 @@ function resetClientSelection() {
 // Remet le formulaire "Nouvelle facture" à zéro et referme la carte — utilisé après
 // chaque vente enregistrée avec succès (comptoir ou normale, en ligne ou hors ligne).
 function resetFactureForm() {
+  editMode = null;
+  document.getElementById("form-title").textContent = "Nouvelle facture (brouillon)";
+  document.getElementById("edit-hint").style.display = "none";
+  document.getElementById("vente-comptoir-check").closest("label").style.display = "flex";
   document.getElementById("new-facture-card").style.display = "none";
   document.getElementById("lignes-body").innerHTML = "";
   ligneWidgets = {};
@@ -616,6 +737,14 @@ async function cancelPendingSale(id) {
     } else {
       showToast("Cette pièce est introuvable dans le catalogue.", "error");
     }
+    window.history.replaceState({}, "", "factures.html");
+  }
+
+  // Arrivée depuis le détail d'une facture : ?edit=ID (brouillon) ou ?corriger=ID (facture validée).
+  const params = new URLSearchParams(window.location.search);
+  const editId = Number(params.get("edit") || params.get("corriger"));
+  if (editId) {
+    await startEdit(params.get("corriger") ? "corriger" : "draft", editId);
     window.history.replaceState({}, "", "factures.html");
   }
 

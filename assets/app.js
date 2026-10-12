@@ -1,10 +1,56 @@
 // Enregistre le Service Worker qui met l'application en cache (pages, styles, scripts) :
 // c'est ce qui permet d'ouvrir l'app sans aucune connexion, même après avoir redémarré
 // l'ordinateur. Le cache vit sur le disque, dans le profil du navigateur.
+//
+// Mise à jour : le navigateur recherche une nouvelle version de sw.js à chaque ouverture, puis
+// toutes les 30 minutes et à chaque retour sur l'onglet. Dès qu'une nouvelle version est prête,
+// une bannière propose d'actualiser (on ne recharge jamais la page de force : une saisie en
+// cours serait perdue).
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch((err) => console.error("Échec de l'enregistrement du Service Worker", err));
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hadController) showUpdateBanner(); // première installation : rien à signaler
   });
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").then((reg) => {
+      const check = () => { if (navigator.onLine) reg.update().catch(() => {}); };
+      setInterval(check, 30 * 60 * 1000);
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
+    }).catch((err) => console.error("Échec de l'enregistrement du Service Worker", err));
+  });
+}
+
+function showUpdateBanner() {
+  if (document.getElementById("update-banner")) return;
+  const bar = document.createElement("div");
+  bar.id = "update-banner";
+  bar.className = "update-banner no-print";
+  bar.innerHTML = `<span>Une nouvelle version de l'application est disponible.</span><button type="button" class="btn btn-sm">Actualiser</button>`;
+  bar.querySelector("button").addEventListener("click", () => window.location.reload());
+  document.body.appendChild(bar);
+}
+
+// Version de l'application installée, lue depuis le nom du cache (sylla-shell-vXX).
+async function getAppVersion() {
+  try {
+    const names = await caches.keys();
+    const hit = names.map((n) => /^sylla-shell-(v\d+)$/.exec(n)).find(Boolean);
+    return hit ? hit[1] : null;
+  } catch { return null; }
+}
+
+// Force le téléchargement de la dernière version : supprime les copies mises en cache de
+// l'application puis recharge. Les ventes et modifications en attente (stockées à part dans
+// le navigateur) ne sont pas touchées. Nécessite internet.
+async function forceAppUpdate() {
+  if (!navigator.onLine) { alert("Connexion internet requise pour mettre à jour l'application."); return; }
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map((r) => r.unregister()));
+    const names = await caches.keys();
+    await Promise.all(names.filter((n) => n.startsWith("sylla-")).map((n) => caches.delete(n)));
+  } catch (err) { console.error(err); }
+  window.location.reload();
 }
 
 // getSession() peut essayer de rafraîchir le jeton de connexion via le réseau : hors
@@ -888,3 +934,110 @@ async function runSyncFieldUpdates() {
     document.dispatchEvent(new CustomEvent("sylla:pending-updates-updated"));
   }
 }
+
+
+// ---------- Téléphone : barre de menu en bas, tableaux en fiches, version/mise à jour ----------
+// Tout est construit à partir du menu latéral existant : aucune page HTML à modifier.
+const MOBILE_PRIMARY = { "index.html": "Accueil", "catalogue.html": "Catalogue", "factures.html": "Factures", "credits.html": "Emprunts" };
+
+function initMobileNav() {
+  const sidebar = document.querySelector(".sidebar");
+  if (!sidebar || document.querySelector(".mobile-tabbar")) return;
+  const links = [...sidebar.querySelectorAll(".nav-link")];
+  if (links.length === 0) return;
+  const hrefOf = (a) => a.getAttribute("href");
+
+  const tabbar = document.createElement("nav");
+  tabbar.className = "mobile-tabbar no-print";
+  links.filter((a) => MOBILE_PRIMARY[hrefOf(a)]).forEach((a) => {
+    const t = document.createElement("a");
+    t.href = hrefOf(a);
+    t.className = "tab" + (a.classList.contains("active") ? " active" : "");
+    t.innerHTML = (a.querySelector("svg")?.outerHTML || "") + `<span>${MOBILE_PRIMARY[hrefOf(a)]}</span>`;
+    tabbar.appendChild(t);
+  });
+  const more = document.createElement("button");
+  more.type = "button";
+  const othersActive = links.some((a) => a.classList.contains("active") && !MOBILE_PRIMARY[hrefOf(a)]);
+  more.className = "tab" + (othersActive ? " active" : "");
+  more.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg><span>Plus</span>`;
+  tabbar.appendChild(more);
+
+  const sheet = document.createElement("div");
+  sheet.className = "mobile-sheet no-print";
+  sheet.innerHTML = `<div class="mobile-sheet-panel"></div>`;
+  const panel = sheet.firstElementChild;
+  links.filter((a) => !MOBILE_PRIMARY[hrefOf(a)]).forEach((a) => {
+    const item = document.createElement("a");
+    item.href = hrefOf(a);
+    item.className = "sheet-item" + (a.classList.contains("active") ? " active" : "");
+    item.innerHTML = (a.querySelector("svg")?.outerHTML || "") + `<span>${a.textContent.trim()}</span>`;
+    panel.appendChild(item);
+  });
+  const sep = document.createElement("div"); sep.className = "sheet-sep"; panel.appendChild(sep);
+  const upd = document.createElement("button");
+  upd.type = "button"; upd.className = "sheet-item sheet-update";
+  upd.innerHTML = `<span>Mettre à jour l'application</span><small id="sheet-version"></small>`;
+  upd.addEventListener("click", forceAppUpdate);
+  panel.appendChild(upd);
+  const out = document.createElement("button");
+  out.type = "button"; out.className = "sheet-item sheet-logout";
+  out.innerHTML = `<span>Déconnexion</span>`;
+  out.addEventListener("click", () => logout());
+  panel.appendChild(out);
+
+  const toggle = (open) => sheet.classList.toggle("open", open);
+  more.addEventListener("click", () => toggle(!sheet.classList.contains("open")));
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) toggle(false); });
+
+  document.body.appendChild(sheet);
+  document.body.appendChild(tabbar);
+  getAppVersion().then((v) => { const el = document.getElementById("sheet-version"); if (el && v) el.textContent = v; });
+}
+
+// Version + bouton de mise à jour dans le pied du menu latéral (ordinateur).
+function initUpdateControls() {
+  const footer = document.querySelector(".sidebar-footer");
+  if (!footer || document.getElementById("btn-update-app")) return;
+  const btn = document.createElement("button");
+  btn.type = "button"; btn.id = "btn-update-app"; btn.className = "link-update";
+  btn.textContent = "Mettre à jour l'application";
+  btn.addEventListener("click", forceAppUpdate);
+  footer.appendChild(btn);
+  getAppVersion().then((v) => { if (v) btn.textContent = `Mettre à jour l'application (${v})`; });
+}
+
+// Sur téléphone (CSS), chaque ligne d'un tableau devient une fiche : on recopie donc le titre
+// de colonne sur chaque cellule, et on repère les cellules vides pour les masquer.
+function enhanceTables() {
+  document.querySelectorAll(".main table:not(.no-cards)").forEach((table) => {
+    if (table.closest("#new-facture-card")) return; // le formulaire de facture garde son tableau
+    const heads = [...table.querySelectorAll("thead th")].map((th) => th.textContent.trim());
+    if (heads.length === 0) return;
+    table.classList.add("table-cards");
+    table.querySelectorAll("tbody tr").forEach((tr) => {
+      const cells = [...tr.children].filter((c) => c.tagName === "TD");
+      if (cells.length === 1 && cells[0].colSpan > 1) return; // ligne de regroupement
+      cells.forEach((td, i) => {
+        if (td.dataset.label === undefined) td.dataset.label = heads[i] || "";
+        const txt = td.textContent.trim();
+        td.classList.toggle("td-empty", !td.querySelector("button, a, input, svg") && (txt === "" || txt === "—"));
+      });
+    });
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  initMobileNav();
+  initUpdateControls();
+  enhanceTables();
+  const main = document.querySelector(".main");
+  if (main) {
+    let queued = false;
+    new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => { queued = false; enhanceTables(); });
+    }).observe(main, { childList: true, subtree: true });
+  }
+});

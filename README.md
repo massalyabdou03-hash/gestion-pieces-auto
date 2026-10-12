@@ -21,7 +21,11 @@ Après la migration 1, tout nouvel utilisateur doit être ajouté à `utilisateu
 ## Recouvra (extension payante)
 Le client voit la fenêtre complète uniquement si `recouvra_abonnement.actif = true` et que `expire_at` est vide ou dans le futur. Pour activer / renouveler / couper : `supabase/activer_recouvra.sql` (à lancer par le propriétaire uniquement).
 
-## Déploiement
+## Déploiement et mise à jour du client
+Le site est publié par GitHub Pages à chaque fusion sur `main` : `https://massalyabdou03-hash.github.io/gestion-pieces-auto/`.
+
+Côté client, l'application détecte toute seule la nouvelle version (à l'ouverture, toutes les 30 minutes et au retour sur l'onglet) et affiche une bannière « Nouvelle version disponible — Actualiser ». En cas de doute, le bouton **Mettre à jour l'application** (bas du menu à gauche sur ordinateur, menu « Plus » sur téléphone) vide les copies en cache et recharge ; il affiche aussi le numéro de version. Les ventes en attente hors ligne ne sont pas touchées.
+
 Chaque modification de fichier de l'app doit s'accompagner d'un changement de `CACHE_VERSION` dans `sw.js`, sinon les postes déjà installés gardent l'ancienne version.
 
 ## Sécurité — à faire dans le tableau de bord Supabase
