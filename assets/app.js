@@ -237,12 +237,46 @@ function readLocal(key, fallback) {
   }
 }
 
+// Renvoie true si l'écriture a réussi, false sinon (stockage plein ou bloqué).
 function writeLocal(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch (err) {
     console.error("Erreur d'écriture locale", err);
+    return false;
   }
+}
+
+// Quand une vente ou un mouvement en attente ne peut pas être écrit sur le poste, on
+// le dit clairement au lieu de faire croire qu'il est enregistré.
+function warnLocalStorageFull() {
+  showToast("Impossible d'enregistrer hors ligne : la mémoire du navigateur est pleine. Rien n'a été enregistré, reconnecte-toi à internet avant de continuer.", "error", 9000);
+}
+
+// Verrou entre onglets/fenêtres du même navigateur : une seule synchronisation à la fois,
+// sinon deux onglets pourraient rejouer la même vente en attente et la créer en double.
+async function withSyncLock(name, fn) {
+  if (navigator.locks && navigator.locks.request) {
+    await navigator.locks.request(`sylla-${name}`, { ifAvailable: true }, async (lock) => {
+      if (lock) await fn();
+    });
+  } else {
+    await fn();
+  }
+}
+
+// Un élément resté "syncing" (onglet fermé en pleine synchro) ne serait plus jamais rejoué :
+// au chargement d'une page, on le remet en attente.
+function recoverStuckSyncs() {
+  const fix = (get, save) => {
+    const items = get();
+    let changed = false;
+    items.forEach((it) => { if (it.status === "syncing") { it.status = "pending"; changed = true; } });
+    if (changed) save(items);
+  };
+  fix(getPendingSales, savePendingSales);
+  fix(getPendingMovements, savePendingMovements);
 }
 
 function cachePiecesLocally(pieces) {
@@ -342,7 +376,7 @@ function queuePendingMovement(movement) {
     ...movement,
   };
   movements.push(entry);
-  savePendingMovements(movements);
+  if (!writeLocal("sylla_pending_movements", movements)) { warnLocalStorageFull(); return null; }
   document.dispatchEvent(new CustomEvent("sylla:pending-movements-updated"));
   return entry;
 }
@@ -390,7 +424,7 @@ function queuePendingSale(sale) {
     ...sale,
   };
   sales.push(entry);
-  savePendingSales(sales);
+  if (!writeLocal("sylla_pending_sales", sales)) { warnLocalStorageFull(); return null; }
   document.dispatchEvent(new CustomEvent("sylla:pending-sales-updated"));
   return entry;
 }
@@ -483,6 +517,15 @@ async function syncAllPending() {
   await syncFieldUpdates();
 }
 
+// Quand une nouvelle version de l'application est installée en arrière-plan, on prévient
+// (sans recharger de force : une vente en cours de saisie serait perdue).
+function watchAppUpdates() {
+  if (!("serviceWorker" in navigator) || !navigator.serviceWorker.controller) return;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    showToast("Une nouvelle version de l'application est prête. Elle sera active au prochain rechargement de la page.", "info", 8000);
+  });
+}
+
 async function handleBackOnline() {
   if (offlineRecheckTimer) { clearInterval(offlineRecheckTimer); offlineRecheckTimer = null; }
   setOnlineState(true);
@@ -492,6 +535,8 @@ async function handleBackOnline() {
 function initConnectivity() {
   if (connectivityInitialized) return;
   connectivityInitialized = true;
+  withSyncLock("sync", async () => recoverStuckSyncs());
+  watchAppUpdates();
 
   window.addEventListener("offline", () => setOnlineState(false));
   window.addEventListener("online", async () => {
@@ -512,47 +557,72 @@ async function syncPendingSales() {
   if (syncInProgress) return;
   syncInProgress = true;
   try {
-    const sales = getPendingSales()
-      .filter(s => s.status === "pending" || s.status === "error")
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    await withSyncLock("sync", async () => {
+      const sales = getPendingSales()
+        .filter(s => s.status === "pending" || s.status === "error")
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
-    for (const sale of sales) {
-      updatePendingSale(sale.id, { status: "syncing", errorMsg: null });
-      try {
-        let clientId = sale.client.id;
-        if (sale.client.mode === "new") {
-          const { data: newClient, error: errClient } = await supabaseClient
-            .from("clients")
-            .insert({ nom: sale.client.nom, telephone: sale.client.telephone || null, email: sale.client.email || null })
-            .select().single();
-          if (errClient) throw errClient;
-          clientId = newClient.id;
-          // On fige le client en "existing" tout de suite : si une étape suivante échoue et
-          // qu'on retente plus tard, on ne recrée pas un deuxième client en double.
-          updatePendingSale(sale.id, { client: { mode: "existing", id: clientId, nom: sale.client.nom } });
+      for (const sale of sales) {
+        updatePendingSale(sale.id, { status: "syncing", errorMsg: null });
+        try {
+          let clientId = sale.client.id;
+          if (sale.client.mode === "new") {
+            const { data: newClient, error: errClient } = await supabaseClient
+              .from("clients")
+              .insert({ nom: sale.client.nom, telephone: sale.client.telephone || null, email: sale.client.email || null })
+              .select().single();
+            if (errClient) throw errClient;
+            clientId = newClient.id;
+            // On fige le client en "existing" tout de suite : si une étape suivante échoue et
+            // qu'on retente plus tard, on ne recrée pas un deuxième client en double.
+            updatePendingSale(sale.id, { client: { mode: "existing", id: clientId, nom: sale.client.nom } });
+          }
+
+          // Reprise après un échec : si le brouillon de facture existe déjà, on le réutilise
+          // au lieu d'en créer un deuxième (et si la vente est déjà validée, il n'y a plus rien à faire).
+          let factureId = sale.facture_id || null;
+          if (factureId) {
+            const { data: existante, error: errLecture } = await supabaseClient
+              .from("factures").select("id, statut").eq("id", factureId).maybeSingle();
+            if (errLecture) throw errLecture;
+            if (existante && existante.statut !== "BROUILLON") {
+              removePendingSale(sale.id);
+              showToast(`Vente de ${sale.client.nom} déjà synchronisée.`, "success");
+              continue;
+            }
+            if (!existante) factureId = null;
+          }
+
+          if (!factureId) {
+            const { data: facture, error: errFacture } = await supabaseClient
+              .from("factures").insert({ client_id: clientId, montant_total: sale.total }).select().single();
+            if (errFacture) throw errFacture;
+            factureId = facture.id;
+            updatePendingSale(sale.id, { facture_id: factureId });
+          } else {
+            // Brouillon déjà là : on repart de lignes vides pour ne pas les doubler.
+            const { error: errNettoyage } = await supabaseClient.from("factures_lignes").delete().eq("facture_id", factureId);
+            if (errNettoyage) throw errNettoyage;
+          }
+
+          const lignesPayload = sale.lignes.map(l => ({ ...l, facture_id: factureId }));
+          const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
+          if (errLignes) throw errLignes;
+
+          const { error: errValidation } = await supabaseClient.rpc("valider_facture", {
+            p_facture_id: factureId,
+            p_mode_paiement: sale.mode_paiement,
+            p_echeance_type: sale.echeance_type || null,
+          });
+          if (errValidation) throw errValidation;
+
+          removePendingSale(sale.id);
+          showToast(`Vente de ${sale.client.nom} synchronisée.`, "success");
+        } catch (err) {
+          updatePendingSale(sale.id, { status: "error", errorMsg: friendlyError(err) });
         }
-
-        const { data: facture, error: errFacture } = await supabaseClient
-          .from("factures").insert({ client_id: clientId, montant_total: sale.total }).select().single();
-        if (errFacture) throw errFacture;
-
-        const lignesPayload = sale.lignes.map(l => ({ ...l, facture_id: facture.id }));
-        const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
-        if (errLignes) throw errLignes;
-
-        const { error: errValidation } = await supabaseClient.rpc("valider_facture", {
-          p_facture_id: facture.id,
-          p_mode_paiement: sale.mode_paiement,
-          p_echeance_type: sale.echeance_type || null,
-        });
-        if (errValidation) throw errValidation;
-
-        removePendingSale(sale.id);
-        showToast(`Vente de ${sale.client.nom} synchronisée.`, "success");
-      } catch (err) {
-        updatePendingSale(sale.id, { status: "error", errorMsg: friendlyError(err) });
       }
-    }
+    });
   } finally {
     syncInProgress = false;
     document.dispatchEvent(new CustomEvent("sylla:pending-sales-updated"));
@@ -566,26 +636,28 @@ async function syncPendingMovements() {
   if (movementsSyncInProgress) return;
   movementsSyncInProgress = true;
   try {
-    const movements = getPendingMovements()
-      .filter(m => m.status === "pending" || m.status === "error")
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    await withSyncLock("sync", async () => {
+      const movements = getPendingMovements()
+        .filter(m => m.status === "pending" || m.status === "error")
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
-    for (const mvt of movements) {
-      updatePendingMovement(mvt.id, { status: "syncing", errorMsg: null });
-      try {
-        const { error } = await supabaseClient.rpc("enregistrer_mouvement_stock", {
-          p_piece_id: mvt.piece_id,
-          p_type: mvt.type_mouvement,
-          p_quantite: mvt.quantite,
-          p_motif: mvt.motif || null,
-        });
-        if (error) throw error;
-        removePendingMovement(mvt.id);
-        showToast(`Mouvement de stock (${mvt.piece_designation || "pièce"}) synchronisé.`, "success");
-      } catch (err) {
-        updatePendingMovement(mvt.id, { status: "error", errorMsg: friendlyError(err) });
+      for (const mvt of movements) {
+        updatePendingMovement(mvt.id, { status: "syncing", errorMsg: null });
+        try {
+          const { error } = await supabaseClient.rpc("enregistrer_mouvement_stock", {
+            p_piece_id: mvt.piece_id,
+            p_type: mvt.type_mouvement,
+            p_quantite: mvt.quantite,
+            p_motif: mvt.motif || null,
+          });
+          if (error) throw error;
+          removePendingMovement(mvt.id);
+          showToast(`Mouvement de stock (${mvt.piece_designation || "pièce"}) synchronisé.`, "success");
+        } catch (err) {
+          updatePendingMovement(mvt.id, { status: "error", errorMsg: friendlyError(err) });
+        }
       }
-    }
+    });
   } finally {
     movementsSyncInProgress = false;
     document.dispatchEvent(new CustomEvent("sylla:pending-movements-updated"));
@@ -728,22 +800,24 @@ async function syncFieldUpdates() {
   if (fieldUpdatesSyncInProgress) return;
   fieldUpdatesSyncInProgress = true;
   try {
-    const updates = getFieldUpdates()
-      .filter(u => u.status === "pending" || u.status === "error")
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    await withSyncLock("sync", async () => {
+      const updates = getFieldUpdates()
+        .filter(u => u.status === "pending" || u.status === "error")
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
-    for (const upd of updates) {
-      try {
-        const { error } = await supabaseClient.from(upd.table).update(upd.patch).eq("id", upd.recordId);
-        if (error) throw error;
-        removeFieldUpdate(upd.id);
-        if (upd.label) showToast(`${upd.label} synchronisé.`, "success");
-      } catch (err) {
-        const all = getFieldUpdates();
-        const idx = all.findIndex(u => u.id === upd.id);
-        if (idx !== -1) { all[idx].status = "error"; all[idx].errorMsg = friendlyError(err); saveFieldUpdates(all); }
+      for (const upd of updates) {
+        try {
+          const { error } = await supabaseClient.from(upd.table).update(upd.patch).eq("id", upd.recordId);
+          if (error) throw error;
+          removeFieldUpdate(upd.id);
+          if (upd.label) showToast(`${upd.label} synchronisé.`, "success");
+        } catch (err) {
+          const all = getFieldUpdates();
+          const idx = all.findIndex(u => u.id === upd.id);
+          if (idx !== -1) { all[idx].status = "error"; all[idx].errorMsg = friendlyError(err); saveFieldUpdates(all); }
+        }
       }
-    }
+    });
   } finally {
     fieldUpdatesSyncInProgress = false;
     document.dispatchEvent(new CustomEvent("sylla:pending-updates-updated"));

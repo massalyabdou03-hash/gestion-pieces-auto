@@ -123,7 +123,7 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/app.js"></script>
 <script>
@@ -262,10 +262,11 @@ async function saveFacture() {
   // quantité(s), et c'est déstocké. En ligne comme hors ligne.
   if (isComptoir) {
     if (!appIsOnline) {
-      queuePendingSale({
+      const entree = queuePendingSale({
         client: { mode: "existing", id: Number(clientIdRaw), nom: "Client de passage" },
         lignes, total, mode_paiement: "ESPECES", echeance_type: null,
       });
+      if (!entree) return;
       showToast("Vente enregistrée hors ligne — elle sera synchronisée automatiquement au retour de la connexion.", "info");
       resetFactureForm();
       renderPendingSales();
@@ -314,7 +315,8 @@ async function saveFacture() {
       ? { mode: "new", ...pendingNewClients[clientIdRaw] }
       : { mode: "existing", id: Number(clientIdRaw), nom: document.getElementById("client_id").selectedOptions[0]?.textContent || "" };
 
-    queuePendingSale({ client: clientPayload, lignes, total, mode_paiement: modePaiement, echeance_type: echeanceType });
+    const entree = queuePendingSale({ client: clientPayload, lignes, total, mode_paiement: modePaiement, echeance_type: echeanceType });
+    if (!entree) return;
     showToast("Vente enregistrée hors ligne — elle sera synchronisée automatiquement au retour de la connexion.", "info");
     resetFactureForm();
     renderPendingSales();

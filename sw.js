@@ -6,16 +6,19 @@
 // Stratégie :
 // - Pages/CSS/JS/images de l'app : "stale-while-revalidate" (réponse immédiate
 //   depuis le cache, mise à jour en arrière-plan si une connexion est dispo).
-// - Bibliothèques externes (Supabase JS, XLSX) : cache-first, car les URLs sont
-//   versionnées (figées) donc jamais périmées.
+// - Bibliothèques externes (Supabase JS, XLSX) : cache-first. Leurs URLs contiennent un
+//   numéro de version EXACT (ex: supabase-js@2.112.4) : pour changer de version, il faut
+//   modifier l'URL dans les pages ET augmenter CACHE_VERSION ci-dessous.
 // - Appels à l'API Supabase elle-même : jamais interceptés, gérés par le cache
 //   applicatif (localStorage) dans assets/app.js.
 //
 // Pense à changer CACHE_VERSION si tu modifies les fichiers de l'app, sinon les
 // postes déjà installés continueront de servir l'ancienne version en cache.
+// Après une mise en ligne, les postes affichent la nouvelle version au 2e chargement
+// (un message les prévient dès que la mise à jour est prête).
 // =============================================================================
 
-const CACHE_VERSION = "v13";
+const CACHE_VERSION = "v14";
 const SHELL_CACHE = `sylla-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `sylla-runtime-${CACHE_VERSION}`;
 
@@ -35,6 +38,15 @@ const SHELL_ASSETS = [
   "assets/config.js",
   "assets/img/logo-sylla-icon.png",
   "assets/img/logo-sylla.png",
+  "assets/img/sylla.ico",
+  "assets/fonts/ibm-plex-sans-latin-400-normal.woff2",
+  "assets/fonts/ibm-plex-sans-latin-500-normal.woff2",
+  "assets/fonts/ibm-plex-sans-latin-600-normal.woff2",
+  "assets/fonts/ibm-plex-sans-latin-700-normal.woff2",
+  "assets/fonts/ibm-plex-sans-condensed-latin-600-normal.woff2",
+  "assets/fonts/ibm-plex-sans-condensed-latin-700-normal.woff2",
+  "assets/fonts/ibm-plex-mono-latin-400-normal.woff2",
+  "assets/fonts/ibm-plex-mono-latin-500-normal.woff2",
 ];
 
 self.addEventListener("install", (event) => {
