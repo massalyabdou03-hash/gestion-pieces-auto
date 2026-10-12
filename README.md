@@ -14,11 +14,20 @@ Fonctionne hors connexion (ventes et mouvements mis en file d'attente, synchroni
 
 ## Base de données
 
-Les changements de base sont dans `supabase/migrations/` (à appliquer dans l'ordre : 001, 002, 003).
+Les changements de base sont dans `supabase/migrations/` (à appliquer dans l'ordre : 001, 002, 003, 004).
 
 - Toutes les opérations sensibles passent par des fonctions SQL : `valider_facture`, `annuler_facture`,
   `enregistrer_mouvement_stock`, `supprimer_mouvement_stock`. Elles ne sont appelables que par un utilisateur connecté.
-- Une facture validée ou annulée ne peut plus être modifiée ni supprimée (seul « payé » change).
+- Une facture validée ou annulée ne peut pas être modifiée ou supprimée directement dans la base (seul « payé » change).
+  Pour corriger une facture, on passe par les deux fonctions ci-dessous : aucune limite de durée (une semaine, un an…).
+- **Retour client** (`retour_client`) : bouton sur la facture. Les pièces reviennent en stock, le montant baisse,
+  une dette à crédit diminue d'autant ; si tout est retourné la facture devient « annulée ».
+  Si la facture était déjà payée, l'app rappelle le montant à rembourser.
+- **Modifier une facture** (`modifier_facture`) : client, mode de paiement et lignes. Le stock est recalculé
+  automatiquement (pièces en plus = sortie, en moins = entrée) et refusé si le stock est insuffisant.
+- **Historique des changements** : chaque retour ou modification est enregistré (date, motif, avant/après) dans `factures_historique`.
+- **Recherche** (`rechercher_factures`) sur tout l'historique : numéro, client, téléphone, pièce (désignation, OEM, référence),
+  montant exact, période, statut.
 - Le journal des mouvements et le compteur de factures ne s'écrivent que par ces fonctions.
 
 ## Activer Recouvra pour un client (administrateur uniquement)

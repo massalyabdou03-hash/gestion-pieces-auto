@@ -203,6 +203,8 @@ function friendlyError(err) {
   if (msg.includes("violates foreign key")) return "Cet élément est utilisé ailleurs et ne peut pas être supprimé.";
   if (msg.includes("Stock insuffisant")) return msg.split("CONTEXT")[0].trim();
   if (msg.includes("Invalid login credentials")) return "Code d'accès incorrect.";
+  if (msg.includes("Could not find the function")) return "Cette fonction n'est pas encore installée sur la base de données (migrations à appliquer).";
+  if (msg.includes("permission denied")) return "Action non autorisée.";
   if (msg.includes("facture n'est plus en brouillon") || msg.includes("déjà")) return msg.split("CONTEXT")[0].trim();
   return msg;
 }

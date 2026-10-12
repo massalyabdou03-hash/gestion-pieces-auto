@@ -154,8 +154,11 @@ begin
 end;
 $$;
 
--- C) Une facture validée ou annulée est une pièce comptable : plus de modification ni de suppression.
---    Restent autorisés : marquer payé / non payé, et passer de VALIDEE à ANNULEE.
+-- C) Une facture validée ou annulée est une pièce comptable : on ne la modifie pas "à la main"
+--    par l'API. Restent autorisés en direct : marquer payé / non payé, et passer de VALIDEE à ANNULEE.
+--    Les corrections (retour client, modification) passent par les fonctions retour_client() et
+--    modifier_facture() (migration 004), qui lèvent le verrou pour leur transaction seulement,
+--    remettent le stock d'aplomb et gardent une trace dans factures_historique.
 create or replace function public.trg_factures_verrou() returns trigger
 language plpgsql
 set search_path = public, pg_temp
@@ -169,6 +172,11 @@ begin
   end if;
 
   if old.statut = 'BROUILLON' then
+    return new;
+  end if;
+
+  -- Modification contrôlée par retour_client() / modifier_facture() (valable pour cette transaction uniquement).
+  if coalesce(current_setting('app.edition_facture', true), '') = '1' then
     return new;
   end if;
 
@@ -203,6 +211,11 @@ as $$
 declare
   v_statut varchar;
 begin
+  if coalesce(current_setting('app.edition_facture', true), '') = '1' then
+    if tg_op = 'DELETE' then return old; end if;
+    return new;
+  end if;
+
   if tg_op in ('UPDATE','DELETE') then
     select statut into v_statut from factures where id = old.facture_id;
     if found and v_statut <> 'BROUILLON' then
