@@ -123,7 +123,7 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/vendor/supabase-js-2.117.0.min.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/app.js"></script>
 <script>
@@ -253,6 +253,22 @@ async function saveFacture() {
 
   if (lignes.length === 0) { showMsg(msgEl, "Ajoute au moins une ligne valide."); return; }
 
+  // Garde-fou prix : une ligne à 0 F ou sous le prix d'achat est presque toujours un oubli.
+  const alertesPrix = [];
+  lignes.forEach(l => {
+    const p = piecesList.find(x => x.id === l.piece_id);
+    if (l.prix_unitaire === 0) alertesPrix.push(`${l.designation} : prix à 0 F`);
+    else if (p && Number(p.prix_achat) > 0 && l.prix_unitaire < Number(p.prix_achat)) {
+      alertesPrix.push(`${l.designation} : vendu ${fmtMoney(l.prix_unitaire)} pour un achat à ${fmtMoney(p.prix_achat)}`);
+    }
+  });
+  if (alertesPrix.length > 0) {
+    const continuer = await confirmDialog(alertesPrix.join(" ; ") + ".", {
+      title: "Vérifie les prix", confirmLabel: "Continuer quand même", cancelLabel: "Corriger", danger: false,
+    });
+    if (!continuer) return;
+  }
+
   const total = lignes.reduce((s, l) => s + l.montant, 0);
   const isDraftClient = clientIdRaw.startsWith("new-");
   const isComptoir = document.getElementById("vente-comptoir-check").checked;
@@ -262,10 +278,11 @@ async function saveFacture() {
   // quantité(s), et c'est déstocké. En ligne comme hors ligne.
   if (isComptoir) {
     if (!appIsOnline) {
-      queuePendingSale({
+      const queued = queuePendingSale({
         client: { mode: "existing", id: Number(clientIdRaw), nom: "Client de passage" },
         lignes, total, mode_paiement: "ESPECES", echeance_type: null,
       });
+      if (!queued) return; // stockage local plein : l'utilisateur a été prévenu, la vente n'est PAS enregistrée
       showToast("Vente enregistrée hors ligne — elle sera synchronisée automatiquement au retour de la connexion.", "info");
       resetFactureForm();
       renderPendingSales();
@@ -275,27 +292,16 @@ async function saveFacture() {
     const btn = document.getElementById("save-facture-btn");
     btn.disabled = true; btn.textContent = "Enregistrement...";
 
-    const { data: facture, error: errFacture } = await supabaseClient
-      .from("factures").insert({ client_id: Number(clientIdRaw), montant_total: total }).select().single();
-    if (errFacture) {
+    // pushSale (assets/app.js) crée le brouillon, ajoute les lignes et valide ; si une étape
+    // échoue il supprime le brouillon, donc aucune facture orpheline.
+    try {
+      await pushSale({ clientId: Number(clientIdRaw), lignes, total, mode_paiement: "ESPECES", echeance_type: null });
+    } catch (err) {
       btn.disabled = false; btn.textContent = "Valider comme vente";
-      showMsg(msgEl, friendlyError(errFacture));
+      showMsg(msgEl, friendlyError(err));
       return;
     }
-
-    const lignesPayload = lignes.map(l => ({ ...l, facture_id: facture.id }));
-    const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
-    if (errLignes) {
-      btn.disabled = false; btn.textContent = "Valider comme vente";
-      showMsg(msgEl, friendlyError(errLignes));
-      return;
-    }
-
-    const { error: errValidation } = await supabaseClient.rpc("valider_facture", {
-      p_facture_id: facture.id, p_mode_paiement: "ESPECES", p_echeance_type: null,
-    });
     btn.disabled = false; btn.textContent = "Valider comme vente";
-    if (errValidation) { showMsg(msgEl, friendlyError(errValidation)); return; }
 
     showToast(`Vente enregistrée (${fmtMoney(total)}) — stock mis à jour.`, "success");
     resetFactureForm();
@@ -314,7 +320,7 @@ async function saveFacture() {
       ? { mode: "new", ...pendingNewClients[clientIdRaw] }
       : { mode: "existing", id: Number(clientIdRaw), nom: document.getElementById("client_id").selectedOptions[0]?.textContent || "" };
 
-    queuePendingSale({ client: clientPayload, lignes, total, mode_paiement: modePaiement, echeance_type: echeanceType });
+    if (!queuePendingSale({ client: clientPayload, lignes, total, mode_paiement: modePaiement, echeance_type: echeanceType })) return;
     showToast("Vente enregistrée hors ligne — elle sera synchronisée automatiquement au retour de la connexion.", "info");
     resetFactureForm();
     renderPendingSales();
@@ -337,9 +343,15 @@ async function saveFacture() {
   const lignesPayload = lignes.map(l => ({ ...l, facture_id: facture.id }));
   const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
 
-  btn.disabled = false; btn.textContent = "Enregistrer en brouillon";
+  if (errLignes) {
+    // On ne laisse pas un brouillon vide derrière nous.
+    await supabaseClient.from("factures").delete().eq("id", facture.id).eq("statut", "BROUILLON");
+    btn.disabled = false; btn.textContent = "Enregistrer en brouillon";
+    showMsg(msgEl, friendlyError(errLignes));
+    return;
+  }
 
-  if (errLignes) { showMsg(msgEl, friendlyError(errLignes)); return; }
+  btn.disabled = false; btn.textContent = "Enregistrer en brouillon";
 
   window.location.href = `facture-detail.html?id=${facture.id}`;
 }

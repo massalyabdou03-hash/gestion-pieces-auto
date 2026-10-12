@@ -34,7 +34,7 @@
   </main>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/vendor/supabase-js-2.117.0.min.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/app.js"></script>
 <script>
@@ -230,7 +230,7 @@ async function marquerPaye() {
   if (!ok) return;
 
   if (!appIsOnline) {
-    queueFieldUpdate("factures", Number(factureId), { paye: true, paye_at: new Date().toISOString() }, `Bon #${factureId} marqué payé`);
+    if (!queueFieldUpdate("factures", Number(factureId), { paye: true, paye_at: new Date().toISOString() }, `Bon #${factureId} marqué payé`)) return;
     showToast("Marqué payé hors ligne — synchronisé automatiquement au retour de la connexion.", "info");
     loadFacture();
     return;

@@ -201,6 +201,8 @@ function friendlyError(err) {
     return "Cette référence existe déjà.";
   }
   if (msg.includes("violates foreign key")) return "Cet élément est utilisé ailleurs et ne peut pas être supprimé.";
+  if (msg.includes("JWT expired")) return "Session expirée : reconnecte-toi.";
+  if (msg.includes("row-level security") || msg.includes("permission denied")) return "Action non autorisée avec ce compte.";
   if (msg.includes("Stock insuffisant")) return msg.split("CONTEXT")[0].trim();
   if (msg.includes("Invalid login credentials")) return "Code d'accès incorrect.";
   if (msg.includes("facture n'est plus en brouillon") || msg.includes("déjà")) return msg.split("CONTEXT")[0].trim();
@@ -211,6 +213,14 @@ function friendlyError(err) {
 // Le domaine est arbitraire et n'a pas besoin d'exister réellement.
 function codeToEmail(code) {
   return code.trim().toLowerCase().replace(/\s+/g, "") + "@acces.local";
+}
+
+// L'extension Recouvra est active si le propriétaire l'a activée (actif = vrai) et que
+// l'abonnement n'est pas expiré (expire_at vide = pas de date de fin).
+function recouvraEstActif(abonnement) {
+  if (!abonnement || !abonnement.actif) return false;
+  if (abonnement.expire_at && new Date(abonnement.expire_at) <= new Date()) return false;
+  return true;
 }
 
 // =============================================================================
@@ -237,13 +247,45 @@ function readLocal(key, fallback) {
   }
 }
 
-function writeLocal(key, value) {
+// Libère la place occupée par les copies de cache (catalogue, clients, factures...) — jamais
+// par les files d'attente hors ligne, qui contiennent du travail non encore synchronisé.
+function purgeLocalCaches(exceptKey) {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (err) {
-    console.error("Erreur d'écriture locale", err);
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith("sylla_cache_") && k !== exceptKey)
+      .forEach((k) => localStorage.removeItem(k));
+  } catch {
+    // rien à faire : on réessaiera simplement l'écriture
   }
 }
+
+// Écrit en local et renvoie true/false. Si le stockage est plein, on supprime d'abord les
+// caches puis on réessaie une fois : une vente en attente ne doit jamais être perdue parce
+// que la copie du catalogue occupe la place.
+function writeLocal(key, value) {
+  const json = JSON.stringify(value);
+  try {
+    localStorage.setItem(key, json);
+    return true;
+  } catch {
+    try {
+      purgeLocalCaches(key);
+      localStorage.setItem(key, json);
+      return true;
+    } catch (err) {
+      console.error("Erreur d'écriture locale", err);
+      return false;
+    }
+  }
+}
+
+function notifyStorageFull() {
+  showToast("Espace de stockage du navigateur plein : cette action n'a PAS été enregistrée. Reviens en ligne ou libère de l'espace, puis recommence.", "error", 10000);
+}
+
+// Demande au navigateur de ne pas effacer les données locales de l'app (files d'attente
+// hors ligne) quand il manque de place.
+try { navigator.storage?.persist?.(); } catch { /* sans importance */ }
 
 function cachePiecesLocally(pieces) {
   writeLocal("sylla_cache_pieces", { savedAt: new Date().toISOString(), items: pieces });
@@ -289,8 +331,9 @@ function getFieldUpdates() {
   return readLocal("sylla_pending_updates", []);
 }
 function saveFieldUpdates(updates) {
-  writeLocal("sylla_pending_updates", updates);
+  return writeLocal("sylla_pending_updates", updates);
 }
+// Renvoie false (et prévient l'utilisateur) si l'action n'a pas pu être enregistrée localement.
 function queueFieldUpdate(table, id, patch, label) {
   const updates = getFieldUpdates();
   updates.push({
@@ -300,8 +343,9 @@ function queueFieldUpdate(table, id, patch, label) {
     status: "pending",
     errorMsg: null,
   });
-  saveFieldUpdates(updates);
+  if (!saveFieldUpdates(updates)) { notifyStorageFull(); return false; }
   document.dispatchEvent(new CustomEvent("sylla:pending-updates-updated"));
+  return true;
 }
 function removeFieldUpdate(id) {
   saveFieldUpdates(getFieldUpdates().filter(u => u.id !== id));
@@ -330,8 +374,9 @@ function getPendingMovements() {
   return readLocal("sylla_pending_movements", []);
 }
 function savePendingMovements(movements) {
-  writeLocal("sylla_pending_movements", movements);
+  return writeLocal("sylla_pending_movements", movements);
 }
+// Renvoie null (et prévient l'utilisateur) si le mouvement n'a pas pu être enregistré localement.
 function queuePendingMovement(movement) {
   const movements = getPendingMovements();
   const entry = {
@@ -342,7 +387,7 @@ function queuePendingMovement(movement) {
     ...movement,
   };
   movements.push(entry);
-  savePendingMovements(movements);
+  if (!savePendingMovements(movements)) { notifyStorageFull(); return null; }
   document.dispatchEvent(new CustomEvent("sylla:pending-movements-updated"));
   return entry;
 }
@@ -378,8 +423,9 @@ function getPendingSales() {
   return readLocal("sylla_pending_sales", []);
 }
 function savePendingSales(sales) {
-  writeLocal("sylla_pending_sales", sales);
+  return writeLocal("sylla_pending_sales", sales);
 }
+// Renvoie null (et prévient l'utilisateur) si la vente n'a pas pu être enregistrée localement.
 function queuePendingSale(sale) {
   const sales = getPendingSales();
   const entry = {
@@ -390,7 +436,7 @@ function queuePendingSale(sale) {
     ...sale,
   };
   sales.push(entry);
-  savePendingSales(sales);
+  if (!savePendingSales(sales)) { notifyStorageFull(); return null; }
   document.dispatchEvent(new CustomEvent("sylla:pending-sales-updated"));
   return entry;
 }
@@ -478,9 +524,55 @@ function setOnlineState(isOnline) {
 // chances de rester cohérentes : d'abord les mouvements de stock (souvent des réceptions
 // qui rendent une vente possible), puis les ventes, puis les petites mises à jour de champ.
 async function syncAllPending() {
-  await syncPendingMovements();
-  await syncPendingSales();
-  await syncFieldUpdates();
+  await withSyncLock(async (holdsLock) => {
+    recoverStuckSyncs(holdsLock);
+    await runSyncPendingMovements();
+    await runSyncPendingSales();
+    await runSyncFieldUpdates();
+  }, { quiet: true });
+}
+
+// Un seul onglet à la fois rejoue les files d'attente (sinon la même vente pourrait partir
+// deux fois). Le verrou du navigateur est libéré automatiquement si l'onglet se ferme.
+async function withSyncLock(fn, { quiet = false } = {}) {
+  if (navigator.locks && navigator.locks.request) {
+    return navigator.locks.request("sylla-sync", { ifAvailable: true }, async (lock) => {
+      if (!lock) {
+        if (!quiet) showToast("Une synchronisation est déjà en cours dans un autre onglet.", "info");
+        return null;
+      }
+      return fn(true);
+    });
+  }
+  return fn(false);
+}
+
+// Si l'onglet a été fermé (ou le PC éteint) pendant une synchro, la vente / le mouvement
+// resterait bloqué à "Synchronisation..." pour toujours : on le remet en attente.
+const SYNC_STALE_MS = 2 * 60 * 1000;
+function recoverStuckSyncs(holdsLock) {
+  const isStuck = (x) => x.status === "syncing" && (holdsLock || Date.now() - (x.syncStartedAt || 0) > SYNC_STALE_MS);
+
+  const sales = getPendingSales();
+  let salesChanged = false;
+  sales.forEach((s) => { if (isStuck(s)) { s.status = "pending"; salesChanged = true; } });
+  if (salesChanged) { savePendingSales(sales); document.dispatchEvent(new CustomEvent("sylla:pending-sales-updated")); }
+
+  const movements = getPendingMovements();
+  let movementsChanged = false;
+  movements.forEach((m) => { if (isStuck(m)) { m.status = "pending"; movementsChanged = true; } });
+  if (movementsChanged) { savePendingMovements(movements); document.dispatchEvent(new CustomEvent("sylla:pending-movements-updated")); }
+}
+
+// Points d'entrée publics (boutons "Synchroniser maintenant" / "Réessayer").
+function syncPendingSales() {
+  return withSyncLock(async (holdsLock) => { recoverStuckSyncs(holdsLock); await runSyncPendingSales(); });
+}
+function syncPendingMovements() {
+  return withSyncLock(async (holdsLock) => { recoverStuckSyncs(holdsLock); await runSyncPendingMovements(); });
+}
+function syncFieldUpdates() {
+  return withSyncLock(async () => { await runSyncFieldUpdates(); });
 }
 
 async function handleBackOnline() {
@@ -504,11 +596,62 @@ function initConnectivity() {
   }
 }
 
+// ---------- Création + validation d'une vente (brouillon, lignes, RPC valider_facture) ----------
+// Utilisée par la vente comptoir en ligne ET par la synchro hors ligne : même chemin, mêmes garde-fous.
+//  - Si une étape échoue, le brouillon créé est supprimé : plus de facture orpheline.
+//  - `factureId` (fourni par une tentative précédente interrompue) permet de reprendre sans doublon :
+//    si cette facture est déjà validée, on ne la recrée pas ; si elle est encore en brouillon, on repart
+//    de lignes propres.
+//  - `onDraft(id | null)` permet à l'appelant de mémoriser l'id du brouillon en cours.
+// Renvoie { id, alreadyDone }. Lève l'erreur Supabase en cas d'échec.
+async function pushSale({ clientId, lignes, total, mode_paiement, echeance_type, factureId = null }, onDraft) {
+  let id = factureId;
+
+  if (id) {
+    const { data: existing, error: errExisting } = await supabaseClient
+      .from("factures").select("id, statut").eq("id", id).maybeSingle();
+    if (errExisting) throw errExisting;
+    if (!existing) id = null;
+    else if (existing.statut !== "BROUILLON") return { id, alreadyDone: true };
+  }
+
+  if (!id) {
+    const { data: facture, error: errFacture } = await supabaseClient
+      .from("factures").insert({ client_id: clientId, montant_total: total }).select().single();
+    if (errFacture) throw errFacture;
+    id = facture.id;
+    if (onDraft) onDraft(id);
+  } else {
+    const { error: errClear } = await supabaseClient.from("factures_lignes").delete().eq("facture_id", id);
+    if (errClear) throw errClear;
+  }
+
+  try {
+    const lignesPayload = lignes.map((l) => ({ ...l, facture_id: id }));
+    const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
+    if (errLignes) throw errLignes;
+
+    const { error: errValidation } = await supabaseClient.rpc("valider_facture", {
+      p_facture_id: id,
+      p_mode_paiement: mode_paiement,
+      p_echeance_type: echeance_type || null,
+    });
+    if (errValidation) throw errValidation;
+  } catch (err) {
+    // Nettoyage : on ne laisse pas un brouillon incomplet derrière nous. Si le nettoyage lui-même
+    // échoue (réseau coupé), on garde l'id pour reprendre proprement à la prochaine tentative.
+    const { error: errCleanup } = await supabaseClient
+      .from("factures").delete().eq("id", id).eq("statut", "BROUILLON");
+    if (!errCleanup && onDraft) onDraft(null);
+    throw err;
+  }
+  return { id, alreadyDone: false };
+}
+
 // ---------- Moteur de synchronisation des ventes en attente ----------
-// Rejoue exactement le même chemin que la vente en ligne (brouillon + factures_lignes
-// + RPC valider_facture) donc le numéro de facture officiel et le déstockage réel
-// n'existent qu'à partir de la synchronisation, pas au moment de la vente hors ligne.
-async function syncPendingSales() {
+// Le numéro de facture officiel et le déstockage réel n'existent qu'à partir de la
+// synchronisation, pas au moment de la vente hors ligne.
+async function runSyncPendingSales() {
   if (syncInProgress) return;
   syncInProgress = true;
   try {
@@ -517,7 +660,7 @@ async function syncPendingSales() {
       .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
     for (const sale of sales) {
-      updatePendingSale(sale.id, { status: "syncing", errorMsg: null });
+      updatePendingSale(sale.id, { status: "syncing", errorMsg: null, syncStartedAt: Date.now() });
       try {
         let clientId = sale.client.id;
         if (sale.client.mode === "new") {
@@ -532,20 +675,16 @@ async function syncPendingSales() {
           updatePendingSale(sale.id, { client: { mode: "existing", id: clientId, nom: sale.client.nom } });
         }
 
-        const { data: facture, error: errFacture } = await supabaseClient
-          .from("factures").insert({ client_id: clientId, montant_total: sale.total }).select().single();
-        if (errFacture) throw errFacture;
-
-        const lignesPayload = sale.lignes.map(l => ({ ...l, facture_id: facture.id }));
-        const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
-        if (errLignes) throw errLignes;
-
-        const { error: errValidation } = await supabaseClient.rpc("valider_facture", {
-          p_facture_id: facture.id,
-          p_mode_paiement: sale.mode_paiement,
-          p_echeance_type: sale.echeance_type || null,
-        });
-        if (errValidation) throw errValidation;
+        // On mémorise l'id du brouillon dès sa création : si l'onglet se ferme ou si le réseau
+        // coupe avant la fin, la tentative suivante reprend cette facture au lieu d'en créer une 2e.
+        await pushSale(
+          {
+            clientId, lignes: sale.lignes, total: sale.total,
+            mode_paiement: sale.mode_paiement, echeance_type: sale.echeance_type,
+            factureId: sale.factureId || null,
+          },
+          (draftId) => updatePendingSale(sale.id, { factureId: draftId })
+        );
 
         removePendingSale(sale.id);
         showToast(`Vente de ${sale.client.nom} synchronisée.`, "success");
@@ -562,7 +701,7 @@ async function syncPendingSales() {
 // ---------- Moteur de synchronisation des mouvements de stock en attente ----------
 let movementsSyncInProgress = false;
 
-async function syncPendingMovements() {
+async function runSyncPendingMovements() {
   if (movementsSyncInProgress) return;
   movementsSyncInProgress = true;
   try {
@@ -571,7 +710,7 @@ async function syncPendingMovements() {
       .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
     for (const mvt of movements) {
-      updatePendingMovement(mvt.id, { status: "syncing", errorMsg: null });
+      updatePendingMovement(mvt.id, { status: "syncing", errorMsg: null, syncStartedAt: Date.now() });
       try {
         const { error } = await supabaseClient.rpc("enregistrer_mouvement_stock", {
           p_piece_id: mvt.piece_id,
@@ -724,7 +863,7 @@ function initPieceSearch(container, pieces, { onSelect, getStockLabel } = {}) {
 // ---------- Moteur de synchronisation des petites mises à jour en attente ----------
 let fieldUpdatesSyncInProgress = false;
 
-async function syncFieldUpdates() {
+async function runSyncFieldUpdates() {
   if (fieldUpdatesSyncInProgress) return;
   fieldUpdatesSyncInProgress = true;
   try {

@@ -6,8 +6,9 @@
 // Stratégie :
 // - Pages/CSS/JS/images de l'app : "stale-while-revalidate" (réponse immédiate
 //   depuis le cache, mise à jour en arrière-plan si une connexion est dispo).
-// - Bibliothèques externes (Supabase JS, XLSX) : cache-first, car les URLs sont
-//   versionnées (figées) donc jamais périmées.
+// - Supabase JS est embarqué dans l'app (assets/vendor, version figée) ; XLSX reste
+//   chargé depuis jsDelivr avec une URL versionnée (xlsx@0.18.5) : cache-first, car
+//   cette URL ne change jamais de contenu.
 // - Appels à l'API Supabase elle-même : jamais interceptés, gérés par le cache
 //   applicatif (localStorage) dans assets/app.js.
 //
@@ -15,7 +16,7 @@
 // postes déjà installés continueront de servir l'ancienne version en cache.
 // =============================================================================
 
-const CACHE_VERSION = "v13";
+const CACHE_VERSION = "v14";
 const SHELL_CACHE = `sylla-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `sylla-runtime-${CACHE_VERSION}`;
 
@@ -33,6 +34,7 @@ const SHELL_ASSETS = [
   "assets/style.css",
   "assets/app.js",
   "assets/config.js",
+  "assets/vendor/supabase-js-2.117.0.min.js",
   "assets/img/logo-sylla-icon.png",
   "assets/img/logo-sylla.png",
 ];
