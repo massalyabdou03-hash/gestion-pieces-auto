@@ -16,7 +16,7 @@
 // postes déjà installés continueront de servir l'ancienne version en cache.
 // =============================================================================
 
-const CACHE_VERSION = "v14";
+const CACHE_VERSION = "v15";
 const SHELL_CACHE = `sylla-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `sylla-runtime-${CACHE_VERSION}`;
 
@@ -42,7 +42,9 @@ const SHELL_ASSETS = [
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(SHELL_CACHE)
-      .then((cache) => cache.addAll(SHELL_ASSETS))
+      // cache: "reload" : on ignore le cache HTTP du navigateur, sinon une mise à jour pourrait
+      // recopier d'anciens fichiers encore "frais" pendant quelques minutes.
+      .then((cache) => Promise.all(SHELL_ASSETS.map((u) => cache.add(new Request(u, { cache: "reload" })))))
       .then(() => self.skipWaiting())
   );
 });
