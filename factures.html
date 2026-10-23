@@ -96,9 +96,18 @@
 
     <div class="card">
       <div class="card-head"><h3>Historique</h3></div>
-      <div class="toolbar" style="margin-bottom:16px;">
-        <input class="search-input" id="historique-search" placeholder="Rechercher (client, n° facture)..." oninput="renderFacturesList()">
+      <div class="toolbar" style="margin-bottom:6px;">
+        <input class="search-input" id="historique-search" style="max-width:360px; flex:1; min-width:220px;" placeholder="Rechercher : client, téléphone, n° facture, article, date..." oninput="onHistoriqueFilterChange()">
+        <input type="date" id="filtre-du" title="Du" style="max-width:150px;" onchange="onHistoriqueFilterChange()">
+        <input type="date" id="filtre-au" title="Au" style="max-width:150px;" onchange="onHistoriqueFilterChange()">
+        <select id="filtre-statut" style="max-width:170px;" onchange="onHistoriqueFilterChange()">
+          <option value="">Tous les statuts</option>
+          <option value="VALIDEE">Validées</option>
+          <option value="ANNULEE">Annulées</option>
+          <option value="BROUILLON">Brouillons</option>
+        </select>
       </div>
+      <p class="hint" style="margin:0 0 14px;" id="historique-hint">Sans recherche : les 100 dernières factures. Avec une recherche : toutes les factures, même anciennes.</p>
       <div id="table-content">Chargement...</div>
     </div>
   </main>
@@ -613,38 +622,105 @@ document.getElementById("quick-client-form").addEventListener("submit", async (e
   closeQuickClient();
 });
 
-let facturesList = [];
+let facturesList = [];       // ce qui est affiché
+let facturesRecentes = [];   // les 100 dernières (affichage par défaut, aussi gardées pour le hors ligne)
+let rechercheActive = false;
+let rechercheTimer = null;
+let rechercheSeq = 0;
 
 async function loadFactures() {
   const { items, offline, savedAt } = await loadWithCache("factures", () =>
     supabaseClient
-      .from("factures").select("id, numero_facture, statut, montant_total, mode_paiement, created_at, clients(nom)")
+      .from("factures").select("id, numero_facture, statut, montant_total, mode_paiement, created_at, clients(nom, telephone)")
       .neq("statut", "ANNULEE")
       .order("created_at", { ascending: false }).limit(100)
   );
 
   if (offline && savedAt) showToast(`Historique hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
-  facturesList = items;
+  facturesRecentes = items;
+  if (!rechercheActive) facturesList = items;
+  renderFacturesList();
+}
+
+function onHistoriqueFilterChange() {
+  clearTimeout(rechercheTimer);
+  rechercheTimer = setTimeout(runHistoriqueSearch, 300);
+}
+
+function filtresActifs() {
+  return {
+    q: (document.getElementById("historique-search")?.value || "").trim(),
+    du: document.getElementById("filtre-du")?.value || "",
+    au: document.getElementById("filtre-au")?.value || "",
+    statut: document.getElementById("filtre-statut")?.value || "",
+  };
+}
+
+// Recherche dans TOUT l'historique (même vieux de plusieurs mois) : le serveur cherche par
+// numéro, client, téléphone, article (nom ou référence), montant exact, période et statut.
+async function runHistoriqueSearch() {
+  const { q, du, au, statut } = filtresActifs();
+  const hint = document.getElementById("historique-hint");
+
+  if (!q && !du && !au && !statut) {
+    rechercheActive = false;
+    facturesList = facturesRecentes;
+    hint.textContent = "Sans recherche : les 100 dernières factures. Avec une recherche : toutes les factures, même anciennes.";
+    renderFacturesList();
+    return;
+  }
+  rechercheActive = true;
+
+  // Une date tapée dans la barre (ex : 05/10/2026) devient un filtre de période.
+  let texte = q, duV = du || null, auV = au || null;
+  const m = q.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+  if (m) {
+    duV = auV = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    texte = "";
+  }
+
+  if (!appIsOnline) {
+    // Hors ligne : on ne peut chercher que dans les 100 dernières factures gardées sur ce poste.
+    const t = q.toLowerCase();
+    facturesList = facturesRecentes.filter(f =>
+      (!t || (f.clients?.nom || "").toLowerCase().includes(t) || (f.numero_facture || "").toLowerCase().includes(t) || (f.clients?.telephone || "").includes(t)) &&
+      (!statut || f.statut === statut));
+    hint.textContent = "Hors connexion : recherche limitée aux 100 dernières factures. Reconnecte-toi pour chercher dans tout l'historique.";
+    renderFacturesList();
+    return;
+  }
+
+  const seq = ++rechercheSeq;
+  hint.textContent = "Recherche en cours...";
+  const { data, error } = await supabaseClient.rpc("rechercher_factures", {
+    p_q: texte || null, p_statut: statut || null, p_du: duV, p_au: auV, p_limit: 300,
+  });
+  if (seq !== rechercheSeq) return; // une recherche plus récente a pris le relais
+  if (error) { hint.textContent = ""; showToast(friendlyError(error), "error"); return; }
+
+  facturesList = (data || []).map(r => ({
+    id: r.id, numero_facture: r.numero_facture, statut: r.statut, montant_total: r.montant_total,
+    mode_paiement: r.mode_paiement, created_at: r.created_at, paye: r.paye,
+    clients: { nom: r.client_nom, telephone: r.client_telephone },
+  }));
+  hint.textContent = facturesList.length >= 300
+    ? "300 résultats affichés (les plus récents) : précise la recherche pour affiner."
+    : `${facturesList.length} facture(s) trouvée(s) dans tout l'historique.`;
   renderFacturesList();
 }
 
 function renderFacturesList() {
   const el = document.getElementById("table-content");
-  if (facturesList.length === 0) { el.innerHTML = `<div class="empty-state">Aucune facture pour le moment.</div>`; return; }
-
-  const q = (document.getElementById("historique-search")?.value || "").trim().toLowerCase();
-  const items = q ? facturesList.filter(f =>
-    (f.clients?.nom || "").toLowerCase().includes(q) ||
-    (f.numero_facture || "").toLowerCase().includes(q)
-  ) : facturesList;
-
-  if (items.length === 0) { el.innerHTML = `<div class="empty-state">Aucun résultat pour cette recherche.</div>`; return; }
+  if (facturesList.length === 0) {
+    el.innerHTML = `<div class="empty-state">${rechercheActive ? "Aucun résultat pour cette recherche." : "Aucune facture pour le moment."}</div>`;
+    return;
+  }
+  const items = facturesList;
 
   const badgeClass = { BROUILLON: "badge-muted", VALIDEE: "badge-success", ANNULEE: "badge-danger" };
 
   // Regroupe par jour (les factures sont déjà triées du plus récent au plus ancien) :
-  // c'est ce qui sert le mieux la lecture au quotidien (caisse, clôture du jour), la
-  // recherche ci-dessus couvrant déjà le besoin de retrouver un client précis.
+  // c'est ce qui sert le mieux la lecture au quotidien (caisse, clôture du jour).
   const groups = [];
   let currentKey = null;
   for (const f of items) {
@@ -662,7 +738,7 @@ function renderFacturesList() {
           ${g.rows.map(f => `
             <tr style="cursor:pointer;" onclick="window.location.href='facture-detail.html?id=${f.id}'">
               <td class="ref">${esc(f.numero_facture || "brouillon-" + f.id)}</td>
-              <td>${esc(f.clients?.nom || "—")}</td>
+              <td>${esc(f.clients?.nom || "—")}${f.clients?.telephone ? `<div class="hint" style="margin:0;">${esc(f.clients.telephone)}</div>` : ""}</td>
               <td><span class="badge ${badgeClass[f.statut]}">${f.statut}</span></td>
               <td class="hint">${f.mode_paiement ? esc(MODE_PAIEMENT_LABELS[f.mode_paiement] || f.mode_paiement) : "—"}</td>
               <td class="num">${fmtMoney(f.montant_total)}</td>
