@@ -32,8 +32,7 @@
     </div>
 
     <div class="card" id="new-facture-card" style="display:none;">
-      <h3 id="form-title">Nouvelle facture (brouillon)</h3>
-      <div id="edit-hint" class="info-msg" style="display:none; margin-bottom:12px;"></div>
+      <h3>Nouvelle facture (brouillon)</h3>
       <label>Client *</label>
       <div class="input-with-action" id="client-select-row">
         <select id="client_id" required onchange="updateOfflineFieldsVisibility()"><option value="">Sélectionner un client...</option></select>
@@ -96,9 +95,18 @@
 
     <div class="card">
       <div class="card-head"><h3>Historique</h3></div>
-      <div class="toolbar" style="margin-bottom:16px;">
-        <input class="search-input" id="historique-search" placeholder="Rechercher (client, n° facture)..." oninput="renderFacturesList()">
+      <div class="toolbar" style="margin-bottom:6px;">
+        <input class="search-input" id="historique-search" style="max-width:360px; flex:1; min-width:220px;" placeholder="Rechercher : client, téléphone, n° facture, article, date..." oninput="onHistoriqueFilterChange()">
+        <input type="date" id="filtre-du" title="Du" style="max-width:150px;" onchange="onHistoriqueFilterChange()">
+        <input type="date" id="filtre-au" title="Au" style="max-width:150px;" onchange="onHistoriqueFilterChange()">
+        <select id="filtre-statut" style="max-width:170px;" onchange="onHistoriqueFilterChange()">
+          <option value="">Tous les statuts</option>
+          <option value="VALIDEE">Validées</option>
+          <option value="ANNULEE">Annulées</option>
+          <option value="BROUILLON">Brouillons</option>
+        </select>
       </div>
+      <p class="hint" style="margin:0 0 14px;" id="historique-hint">Sans recherche : les 100 dernières factures. Avec une recherche : toutes les factures, même anciennes.</p>
       <div id="table-content">Chargement...</div>
     </div>
   </main>
@@ -124,7 +132,7 @@
   </div>
 </div>
 
-<script src="assets/vendor/supabase-js-2.117.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/app.js"></script>
 <script>
@@ -132,14 +140,10 @@ let piecesList = [];
 let ligneCounter = 0;
 let ligneWidgets = {}; // id de ligne -> instance du champ de recherche de pièce (initPieceSearch)
 let pendingNewClients = {}; // clients créés hors ligne, en attente d'un vrai id Supabase
-// Non nul quand le formulaire sert à modifier un brouillon ({kind:"draft"}) ou à corriger
-// une facture validée ({kind:"corriger"}) au lieu de créer une facture neuve.
-let editMode = null;
 
 function toggleNewForm() {
   const card = document.getElementById("new-facture-card");
   const isOpen = card.style.display !== "none";
-  if (isOpen && editMode) { resetFactureForm(); return; }
   card.style.display = isOpen ? "none" : "block";
   if (!isOpen) {
     if (document.getElementById("lignes-body").children.length === 0) addLigne();
@@ -166,12 +170,6 @@ function openNewFormWithPiece(piece) {
 }
 
 function updateOfflineFieldsVisibility() {
-  if (editMode) {
-    document.getElementById("offline-payment-fields").style.display = "none";
-    document.getElementById("save-facture-btn").textContent =
-      editMode.kind === "draft" ? "Enregistrer les modifications" : "Créer la facture corrigée";
-    return;
-  }
   // Un client créé hors ligne doit passer par la file d'attente même si la connexion
   // est revenue entre-temps (il n'a pas encore de vrai id Supabase).
   const clientId = document.getElementById("client_id").value;
@@ -264,24 +262,7 @@ async function saveFacture() {
 
   if (lignes.length === 0) { showMsg(msgEl, "Ajoute au moins une ligne valide."); return; }
 
-  // Garde-fou prix : une ligne à 0 F ou sous le prix d'achat est presque toujours un oubli.
-  const alertesPrix = [];
-  lignes.forEach(l => {
-    const p = piecesList.find(x => x.id === l.piece_id);
-    if (l.prix_unitaire === 0) alertesPrix.push(`${l.designation} : prix à 0 F`);
-    else if (p && Number(p.prix_achat) > 0 && l.prix_unitaire < Number(p.prix_achat)) {
-      alertesPrix.push(`${l.designation} : vendu ${fmtMoney(l.prix_unitaire)} pour un achat à ${fmtMoney(p.prix_achat)}`);
-    }
-  });
-  if (alertesPrix.length > 0) {
-    const continuer = await confirmDialog(alertesPrix.join(" ; ") + ".", {
-      title: "Vérifie les prix", confirmLabel: "Continuer quand même", cancelLabel: "Corriger", danger: false,
-    });
-    if (!continuer) return;
-  }
-
   const total = lignes.reduce((s, l) => s + l.montant, 0);
-  if (editMode) { await saveEdit(clientIdRaw, lignes, total, msgEl); return; }
   const isDraftClient = clientIdRaw.startsWith("new-");
   const isComptoir = document.getElementById("vente-comptoir-check").checked;
 
@@ -290,11 +271,11 @@ async function saveFacture() {
   // quantité(s), et c'est déstocké. En ligne comme hors ligne.
   if (isComptoir) {
     if (!appIsOnline) {
-      const queued = queuePendingSale({
+      const entree = queuePendingSale({
         client: { mode: "existing", id: Number(clientIdRaw), nom: "Client de passage" },
         lignes, total, mode_paiement: "ESPECES", echeance_type: null,
       });
-      if (!queued) return; // stockage local plein : l'utilisateur a été prévenu, la vente n'est PAS enregistrée
+      if (!entree) return;
       showToast("Vente enregistrée hors ligne — elle sera synchronisée automatiquement au retour de la connexion.", "info");
       resetFactureForm();
       renderPendingSales();
@@ -304,16 +285,27 @@ async function saveFacture() {
     const btn = document.getElementById("save-facture-btn");
     btn.disabled = true; btn.textContent = "Enregistrement...";
 
-    // pushSale (assets/app.js) crée le brouillon, ajoute les lignes et valide ; si une étape
-    // échoue il supprime le brouillon, donc aucune facture orpheline.
-    try {
-      await pushSale({ clientId: Number(clientIdRaw), lignes, total, mode_paiement: "ESPECES", echeance_type: null });
-    } catch (err) {
+    const { data: facture, error: errFacture } = await supabaseClient
+      .from("factures").insert({ client_id: Number(clientIdRaw), montant_total: total }).select().single();
+    if (errFacture) {
       btn.disabled = false; btn.textContent = "Valider comme vente";
-      showMsg(msgEl, friendlyError(err));
+      showMsg(msgEl, friendlyError(errFacture));
       return;
     }
+
+    const lignesPayload = lignes.map(l => ({ ...l, facture_id: facture.id }));
+    const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
+    if (errLignes) {
+      btn.disabled = false; btn.textContent = "Valider comme vente";
+      showMsg(msgEl, friendlyError(errLignes));
+      return;
+    }
+
+    const { error: errValidation } = await supabaseClient.rpc("valider_facture", {
+      p_facture_id: facture.id, p_mode_paiement: "ESPECES", p_echeance_type: null,
+    });
     btn.disabled = false; btn.textContent = "Valider comme vente";
+    if (errValidation) { showMsg(msgEl, friendlyError(errValidation)); return; }
 
     showToast(`Vente enregistrée (${fmtMoney(total)}) — stock mis à jour.`, "success");
     resetFactureForm();
@@ -332,7 +324,8 @@ async function saveFacture() {
       ? { mode: "new", ...pendingNewClients[clientIdRaw] }
       : { mode: "existing", id: Number(clientIdRaw), nom: document.getElementById("client_id").selectedOptions[0]?.textContent || "" };
 
-    if (!queuePendingSale({ client: clientPayload, lignes, total, mode_paiement: modePaiement, echeance_type: echeanceType })) return;
+    const entree = queuePendingSale({ client: clientPayload, lignes, total, mode_paiement: modePaiement, echeance_type: echeanceType });
+    if (!entree) return;
     showToast("Vente enregistrée hors ligne — elle sera synchronisée automatiquement au retour de la connexion.", "info");
     resetFactureForm();
     renderPendingSales();
@@ -355,122 +348,11 @@ async function saveFacture() {
   const lignesPayload = lignes.map(l => ({ ...l, facture_id: facture.id }));
   const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
 
-  if (errLignes) {
-    // On ne laisse pas un brouillon vide derrière nous.
-    await supabaseClient.from("factures").delete().eq("id", facture.id).eq("statut", "BROUILLON");
-    btn.disabled = false; btn.textContent = "Enregistrer en brouillon";
-    showMsg(msgEl, friendlyError(errLignes));
-    return;
-  }
-
   btn.disabled = false; btn.textContent = "Enregistrer en brouillon";
 
+  if (errLignes) { showMsg(msgEl, friendlyError(errLignes)); return; }
+
   window.location.href = `facture-detail.html?id=${facture.id}`;
-}
-
-// Ouvre le formulaire pour modifier un brouillon (kind = "draft") ou pour corriger une facture
-// validée (kind = "corriger") : dans ce second cas rien n'est annulé tout de suite, l'ancienne
-// facture n'est annulée qu'au moment d'enregistrer la nouvelle.
-async function startEdit(kind, id) {
-  if (!appIsOnline) { showToast("Connexion requise pour modifier une facture.", "error"); return; }
-  const { data: f, error } = await supabaseClient
-    .from("factures").select("id, numero_facture, statut, client_id").eq("id", id).single();
-  if (error || !f) { showToast("Facture introuvable.", "error"); return; }
-  if (kind === "draft" && f.statut !== "BROUILLON") { showToast("Seul un brouillon peut être modifié. Utilise « Corriger » pour une facture validée.", "error"); return; }
-  if (kind === "corriger" && f.statut !== "VALIDEE") { showToast("Seule une facture validée peut être corrigée.", "error"); return; }
-
-  const { data: lignes, error: errL } = await supabaseClient
-    .from("factures_lignes").select("id, piece_id, designation, quantite, prix_unitaire").eq("facture_id", id).order("id");
-  if (errL || !lignes || lignes.length === 0) { showToast("Impossible de relire les lignes de cette facture.", "error"); return; }
-
-  editMode = { kind, id: f.id, numero: f.numero_facture, oldLineIds: lignes.map(l => l.id) };
-
-  document.getElementById("new-facture-card").style.display = "block";
-  document.getElementById("vente-comptoir-check").checked = false;
-  document.getElementById("client-select-row").style.display = "flex";
-  document.getElementById("vente-comptoir-check").closest("label").style.display = "none";
-  document.getElementById("client_id").value = String(f.client_id);
-
-  document.getElementById("lignes-body").innerHTML = "";
-  ligneWidgets = {};
-  for (const l of lignes) {
-    addLigne();
-    const rowId = ligneCounter;
-    const piece = piecesList.find(p => p.id === l.piece_id)
-      || { id: l.piece_id, designation: l.designation, reference_oem: "pièce archivée", prix_vente: l.prix_unitaire, quantite_stock: 0 };
-    ligneWidgets[rowId].setSelected(piece);
-    const tr = document.getElementById(`ligne-${rowId}`);
-    tr.querySelector(".ligne-qte").value = l.quantite;
-    tr.querySelector(".ligne-prix").value = l.prix_unitaire;
-    recalcLigne(rowId);
-  }
-
-  const hint = document.getElementById("edit-hint");
-  if (kind === "draft") {
-    document.getElementById("form-title").textContent = "Modifier le brouillon";
-    hint.textContent = "Change le client, les pièces, les quantités ou les prix, puis enregistre. Le stock ne bouge qu'à la validation.";
-  } else {
-    document.getElementById("form-title").textContent = `Corriger la facture ${f.numero_facture || "#" + f.id}`;
-    hint.textContent = `Corrige ce qu'il faut puis enregistre : un nouveau brouillon est créé et la facture ${f.numero_facture || "#" + f.id} est annulée (ses pièces sont remises en stock). Il restera à valider le nouveau brouillon.`;
-  }
-  hint.style.display = "block";
-  updateOfflineFieldsVisibility();
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
-async function saveEdit(clientIdRaw, lignes, total, msgEl) {
-  if (!appIsOnline) { showMsg(msgEl, "Connexion requise pour enregistrer cette modification."); return; }
-  if (clientIdRaw.startsWith("new-")) { showMsg(msgEl, "Ce client n'est pas encore enregistré : réessaie quand la synchronisation est terminée."); return; }
-
-  const em = editMode;
-  const clientId = Number(clientIdRaw);
-  const btn = document.getElementById("save-facture-btn");
-  const label = btn.textContent;
-  btn.disabled = true; btn.textContent = "Enregistrement...";
-  const restore = () => { btn.disabled = false; btn.textContent = label; };
-
-  if (em.kind === "draft") {
-    // On ajoute les nouvelles lignes AVANT de retirer les anciennes : en cas d'échec le brouillon reste intact.
-    const { data: ajoutees, error: errIns } = await supabaseClient
-      .from("factures_lignes").insert(lignes.map(l => ({ ...l, facture_id: em.id }))).select("id");
-    if (errIns) { restore(); showMsg(msgEl, friendlyError(errIns)); return; }
-
-    const { error: errDel } = await supabaseClient.from("factures_lignes").delete().in("id", em.oldLineIds);
-    if (errDel) {
-      await supabaseClient.from("factures_lignes").delete().in("id", (ajoutees || []).map(x => x.id));
-      restore(); showMsg(msgEl, friendlyError(errDel)); return;
-    }
-
-    const { error: errUp } = await supabaseClient
-      .from("factures").update({ client_id: clientId, montant_total: total }).eq("id", em.id).eq("statut", "BROUILLON");
-    if (errUp) { restore(); showMsg(msgEl, "Les lignes sont enregistrées mais le client n'a pas pu être changé : " + friendlyError(errUp)); return; }
-
-    window.location.href = `facture-detail.html?id=${em.id}`;
-    return;
-  }
-
-  // Correction d'une facture validée : 1) nouveau brouillon, 2) annulation de l'ancienne.
-  const { data: nouvelle, error: errF } = await supabaseClient
-    .from("factures").insert({ client_id: clientId, montant_total: total }).select().single();
-  if (errF) { restore(); showMsg(msgEl, friendlyError(errF)); return; }
-
-  const { error: errL } = await supabaseClient
-    .from("factures_lignes").insert(lignes.map(l => ({ ...l, facture_id: nouvelle.id })));
-  if (errL) {
-    await supabaseClient.from("factures").delete().eq("id", nouvelle.id).eq("statut", "BROUILLON");
-    restore(); showMsg(msgEl, friendlyError(errL)); return;
-  }
-
-  const { error: errAnn } = await supabaseClient.rpc("annuler_facture", { p_facture_id: em.id });
-  if (errAnn) {
-    await supabaseClient.from("factures").delete().eq("id", nouvelle.id).eq("statut", "BROUILLON");
-    restore();
-    showMsg(msgEl, "L'ancienne facture n'a pas pu être annulée, rien n'a été modifié : " + friendlyError(errAnn));
-    return;
-  }
-
-  showToast(`Facture ${em.numero || "#" + em.id} annulée (stock remis). Valide maintenant le nouveau brouillon.`, "success");
-  window.location.href = `facture-detail.html?id=${nouvelle.id}`;
 }
 
 async function loadPieces() {
@@ -531,10 +413,6 @@ function resetClientSelection() {
 // Remet le formulaire "Nouvelle facture" à zéro et referme la carte — utilisé après
 // chaque vente enregistrée avec succès (comptoir ou normale, en ligne ou hors ligne).
 function resetFactureForm() {
-  editMode = null;
-  document.getElementById("form-title").textContent = "Nouvelle facture (brouillon)";
-  document.getElementById("edit-hint").style.display = "none";
-  document.getElementById("vente-comptoir-check").closest("label").style.display = "flex";
   document.getElementById("new-facture-card").style.display = "none";
   document.getElementById("lignes-body").innerHTML = "";
   ligneWidgets = {};
@@ -613,38 +491,105 @@ document.getElementById("quick-client-form").addEventListener("submit", async (e
   closeQuickClient();
 });
 
-let facturesList = [];
+let facturesList = [];       // ce qui est affiché
+let facturesRecentes = [];   // les 100 dernières (affichage par défaut, aussi gardées pour le hors ligne)
+let rechercheActive = false;
+let rechercheTimer = null;
+let rechercheSeq = 0;
 
 async function loadFactures() {
   const { items, offline, savedAt } = await loadWithCache("factures", () =>
     supabaseClient
-      .from("factures").select("id, numero_facture, statut, montant_total, mode_paiement, created_at, clients(nom)")
+      .from("factures").select("id, numero_facture, statut, montant_total, mode_paiement, created_at, clients(nom, telephone)")
       .neq("statut", "ANNULEE")
       .order("created_at", { ascending: false }).limit(100)
   );
 
   if (offline && savedAt) showToast(`Historique hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
-  facturesList = items;
+  facturesRecentes = items;
+  if (!rechercheActive) facturesList = items;
+  renderFacturesList();
+}
+
+function onHistoriqueFilterChange() {
+  clearTimeout(rechercheTimer);
+  rechercheTimer = setTimeout(runHistoriqueSearch, 300);
+}
+
+function filtresActifs() {
+  return {
+    q: (document.getElementById("historique-search")?.value || "").trim(),
+    du: document.getElementById("filtre-du")?.value || "",
+    au: document.getElementById("filtre-au")?.value || "",
+    statut: document.getElementById("filtre-statut")?.value || "",
+  };
+}
+
+// Recherche dans TOUT l'historique (même vieux de plusieurs mois) : le serveur cherche par
+// numéro, client, téléphone, article (nom ou référence), montant exact, période et statut.
+async function runHistoriqueSearch() {
+  const { q, du, au, statut } = filtresActifs();
+  const hint = document.getElementById("historique-hint");
+
+  if (!q && !du && !au && !statut) {
+    rechercheActive = false;
+    facturesList = facturesRecentes;
+    hint.textContent = "Sans recherche : les 100 dernières factures. Avec une recherche : toutes les factures, même anciennes.";
+    renderFacturesList();
+    return;
+  }
+  rechercheActive = true;
+
+  // Une date tapée dans la barre (ex : 05/10/2026) devient un filtre de période.
+  let texte = q, duV = du || null, auV = au || null;
+  const m = q.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+  if (m) {
+    duV = auV = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    texte = "";
+  }
+
+  if (!appIsOnline) {
+    // Hors ligne : on ne peut chercher que dans les 100 dernières factures gardées sur ce poste.
+    const t = q.toLowerCase();
+    facturesList = facturesRecentes.filter(f =>
+      (!t || (f.clients?.nom || "").toLowerCase().includes(t) || (f.numero_facture || "").toLowerCase().includes(t) || (f.clients?.telephone || "").includes(t)) &&
+      (!statut || f.statut === statut));
+    hint.textContent = "Hors connexion : recherche limitée aux 100 dernières factures. Reconnecte-toi pour chercher dans tout l'historique.";
+    renderFacturesList();
+    return;
+  }
+
+  const seq = ++rechercheSeq;
+  hint.textContent = "Recherche en cours...";
+  const { data, error } = await supabaseClient.rpc("rechercher_factures", {
+    p_q: texte || null, p_statut: statut || null, p_du: duV, p_au: auV, p_limit: 300,
+  });
+  if (seq !== rechercheSeq) return; // une recherche plus récente a pris le relais
+  if (error) { hint.textContent = ""; showToast(friendlyError(error), "error"); return; }
+
+  facturesList = (data || []).map(r => ({
+    id: r.id, numero_facture: r.numero_facture, statut: r.statut, montant_total: r.montant_total,
+    mode_paiement: r.mode_paiement, created_at: r.created_at, paye: r.paye,
+    clients: { nom: r.client_nom, telephone: r.client_telephone },
+  }));
+  hint.textContent = facturesList.length >= 300
+    ? "300 résultats affichés (les plus récents) : précise la recherche pour affiner."
+    : `${facturesList.length} facture(s) trouvée(s) dans tout l'historique.`;
   renderFacturesList();
 }
 
 function renderFacturesList() {
   const el = document.getElementById("table-content");
-  if (facturesList.length === 0) { el.innerHTML = `<div class="empty-state">Aucune facture pour le moment.</div>`; return; }
-
-  const q = (document.getElementById("historique-search")?.value || "").trim().toLowerCase();
-  const items = q ? facturesList.filter(f =>
-    (f.clients?.nom || "").toLowerCase().includes(q) ||
-    (f.numero_facture || "").toLowerCase().includes(q)
-  ) : facturesList;
-
-  if (items.length === 0) { el.innerHTML = `<div class="empty-state">Aucun résultat pour cette recherche.</div>`; return; }
+  if (facturesList.length === 0) {
+    el.innerHTML = `<div class="empty-state">${rechercheActive ? "Aucun résultat pour cette recherche." : "Aucune facture pour le moment."}</div>`;
+    return;
+  }
+  const items = facturesList;
 
   const badgeClass = { BROUILLON: "badge-muted", VALIDEE: "badge-success", ANNULEE: "badge-danger" };
 
   // Regroupe par jour (les factures sont déjà triées du plus récent au plus ancien) :
-  // c'est ce qui sert le mieux la lecture au quotidien (caisse, clôture du jour), la
-  // recherche ci-dessus couvrant déjà le besoin de retrouver un client précis.
+  // c'est ce qui sert le mieux la lecture au quotidien (caisse, clôture du jour).
   const groups = [];
   let currentKey = null;
   for (const f of items) {
@@ -662,7 +607,7 @@ function renderFacturesList() {
           ${g.rows.map(f => `
             <tr style="cursor:pointer;" onclick="window.location.href='facture-detail.html?id=${f.id}'">
               <td class="ref">${esc(f.numero_facture || "brouillon-" + f.id)}</td>
-              <td>${esc(f.clients?.nom || "—")}</td>
+              <td>${esc(f.clients?.nom || "—")}${f.clients?.telephone ? `<div class="hint" style="margin:0;">${esc(f.clients.telephone)}</div>` : ""}</td>
               <td><span class="badge ${badgeClass[f.statut]}">${f.statut}</span></td>
               <td class="hint">${f.mode_paiement ? esc(MODE_PAIEMENT_LABELS[f.mode_paiement] || f.mode_paiement) : "—"}</td>
               <td class="num">${fmtMoney(f.montant_total)}</td>
@@ -737,14 +682,6 @@ async function cancelPendingSale(id) {
     } else {
       showToast("Cette pièce est introuvable dans le catalogue.", "error");
     }
-    window.history.replaceState({}, "", "factures.html");
-  }
-
-  // Arrivée depuis le détail d'une facture : ?edit=ID (brouillon) ou ?corriger=ID (facture validée).
-  const params = new URLSearchParams(window.location.search);
-  const editId = Number(params.get("edit") || params.get("corriger"));
-  if (editId) {
-    await startEdit(params.get("corriger") ? "corriger" : "draft", editId);
     window.history.replaceState({}, "", "factures.html");
   }
 

@@ -34,7 +34,67 @@
   </main>
 </div>
 
-<script src="assets/vendor/supabase-js-2.117.0.min.js"></script>
+<!-- Retour client -->
+<div class="modal-backdrop" id="retour-modal">
+  <div class="modal modal-lg">
+    <div class="modal-head"><h3>Retour client</h3><button class="close-x" onclick="closeRetour()">×</button></div>
+    <p class="hint" style="margin-top:0;">Indique la quantité rendue pour chaque article. Les pièces retournent en stock et le montant de la facture diminue.</p>
+    <div id="retour-lignes"></div>
+    <label>Motif (facultatif)</label>
+    <input id="retour-motif" maxlength="120" placeholder="ex : pièce non compatible, client a changé d'avis">
+    <div id="retour-resume" class="info-msg" style="display:none;"></div>
+    <div id="retour-msg"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeRetour()">Annuler</button>
+      <button type="button" class="btn" id="retour-btn" onclick="enregistrerRetour()">Enregistrer le retour</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modification d'une facture validée -->
+<div class="modal-backdrop" id="modif-modal">
+  <div class="modal modal-lg">
+    <div class="modal-head"><h3>Modifier la facture <span id="modif-numero" class="mono"></span></h3><button class="close-x" onclick="closeModif()">×</button></div>
+    <p class="hint" style="margin-top:0;">Corrige le client, le paiement, les quantités, les prix ou les articles. Le stock est recalculé automatiquement et chaque changement est gardé dans l'historique de la facture.</p>
+    <div id="modif-chargement" class="hint">Chargement...</div>
+    <div id="modif-form" style="display:none;">
+      <div class="field-row">
+        <div><label style="margin-top:0;">Client</label><select id="modif-client"></select></div>
+        <div>
+          <label style="margin-top:0;">Mode de paiement</label>
+          <select id="modif-mode" onchange="onModifModeChange()">
+            <option value="ESPECES">Espèces</option>
+            <option value="CARTE">Carte</option>
+            <option value="VIREMENT">Virement</option>
+            <option value="WAVE">Wave</option>
+            <option value="OM">Orange Money</option>
+            <option value="CHEQUE">Chèque</option>
+            <option value="CREDIT">Crédit (bon — le client paie plus tard)</option>
+          </select>
+        </div>
+      </div>
+      <div id="modif-echeance-field" style="display:none; max-width:260px;">
+        <label>Le client paie sous</label>
+        <select id="modif-echeance"><option value="SEMAINE">1 semaine</option><option value="MOIS">1 mois</option></select>
+      </div>
+      <table style="margin-top:16px;">
+        <thead><tr><th>Pièce</th><th style="width:90px;">Qté</th><th style="width:120px;">Prix unit.</th><th style="width:110px;">Montant</th><th></th></tr></thead>
+        <tbody id="modif-lignes-body"></tbody>
+      </table>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin-top:10px;" onclick="addModifLigne()">+ Ajouter une ligne</button>
+      <div style="text-align:right; margin-top:12px; font-family:var(--font-display); font-size:1.15rem;">Nouveau total : <span class="mono" id="modif-total">0 F</span></div>
+      <label>Motif de la modification (facultatif)</label>
+      <input id="modif-motif" maxlength="120" placeholder="ex : erreur de prix, mauvais client">
+    </div>
+    <div id="modif-msg"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeModif()">Annuler</button>
+      <button type="button" class="btn" id="modif-btn" onclick="enregistrerModif()" disabled>Enregistrer les modifications</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/app.js"></script>
 <script>
@@ -50,21 +110,24 @@ async function loadFacture() {
   const el = document.getElementById("content");
   if (!factureId) { el.innerHTML = `<div class="error-msg">Facture introuvable.</div>`; return; }
 
-  let facture, lignes, offline = false, savedAt = null;
+  let facture, lignes, historique = [], offline = false, savedAt = null;
   try {
     const { data: f, error } = await supabaseClient
       .from("factures").select("*, clients(nom, telephone, email, adresse)").eq("id", factureId).single();
     if (error || !f) throw error || new Error("introuvable");
-    const { data: l } = await supabaseClient.from("factures_lignes").select("*").eq("facture_id", factureId);
-    facture = f; lignes = l || [];
-    cacheCollection(`facture_${factureId}`, { facture, lignes });
+    const { data: l } = await supabaseClient.from("factures_lignes").select("*").eq("facture_id", factureId).order("id");
+    // Historique des retours et modifications (vide tant que la table n'existe pas ou n'a rien).
+    const { data: h } = await supabaseClient.from("factures_historique").select("*").eq("facture_id", factureId).order("created_at", { ascending: false });
+    facture = f; lignes = l || []; historique = h || [];
+    cacheCollection(`facture_${factureId}`, { facture, lignes, historique });
   } catch {
     const cached = getCachedCollection(`facture_${factureId}`);
     if (!cached.savedAt) { el.innerHTML = `<div class="error-msg">Facture introuvable. ${appIsOnline ? "" : "Hors ligne et jamais consultée sur ce poste : reconnecte-toi une fois pour la mettre en cache."}</div>`; return; }
-    facture = cached.items.facture; lignes = cached.items.lignes;
+    facture = cached.items.facture; lignes = cached.items.lignes; historique = cached.items.historique || [];
     offline = true; savedAt = cached.savedAt;
   }
   [facture] = applyPendingFieldUpdates("factures", [facture]);
+  currentFacture = facture; currentLignes = lignes;
   if (offline && savedAt) showToast(`Facture hors ligne : données du ${fmtDateTime(savedAt)}.`, "info");
 
   const badgeClass = { BROUILLON: "badge-muted", VALIDEE: "badge-success", ANNULEE: "badge-danger" };
@@ -90,9 +153,9 @@ async function loadFacture() {
         </div>
         <div class="no-print toolbar">
           ${facture.statut === "VALIDEE" ? `<button class="btn btn-secondary" onclick="window.print()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M6 17h12v4H6z"/></svg>Imprimer</button>` : ""}
-          ${facture.statut === "VALIDEE" ? `<a class="btn btn-secondary ${appIsOnline ? "" : "disabled"}" ${appIsOnline ? `href="factures.html?corriger=${Number(facture.id)}"` : 'title="Connexion requise"'}>Corriger</a>` : ""}
+          ${facture.statut === "VALIDEE" ? `<button class="btn btn-secondary" ${appIsOnline ? "" : "disabled"} title="${appIsOnline ? "Un client rapporte des pièces" : "Connexion requise"}" onclick="openRetour()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>Retour client</button>` : ""}
+          ${facture.statut === "VALIDEE" ? `<button class="btn btn-secondary" ${appIsOnline ? "" : "disabled"} title="${appIsOnline ? "Corriger client, paiement, quantités, prix" : "Connexion requise"}" onclick="openModif()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>Modifier</button>` : ""}
           ${facture.statut === "VALIDEE" ? `<button class="btn btn-danger-solid" ${appIsOnline ? "" : "disabled"} title="${appIsOnline ? "" : "Connexion requise"}" onclick="annulerFacture()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>Annuler la facture</button>` : ""}
-          ${facture.statut === "BROUILLON" ? `<a class="btn btn-secondary ${appIsOnline ? "" : "disabled"}" ${appIsOnline ? `href="factures.html?edit=${Number(facture.id)}"` : 'title="Connexion requise"'}>Modifier</a>` : ""}
           ${facture.statut === "BROUILLON" ? `<button class="btn btn-danger-solid" ${appIsOnline ? "" : "disabled"} title="${appIsOnline ? "" : "Connexion requise"}" onclick="supprimerBrouillon()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>Supprimer le brouillon</button>` : ""}
         </div>
       </div>
@@ -132,7 +195,7 @@ async function loadFacture() {
           ${(lignes || []).map(l => `
             <tr>
               <td>${esc(l.designation)}</td>
-              <td class="num">${l.quantite}</td>
+              <td class="num">${l.quantite}${l.quantite_retournee > 0 ? `<div class="hint" style="margin:0;">dont ${l.quantite_retournee} retourné${l.quantite_retournee > 1 ? "s" : ""}</div>` : ""}</td>
               <td class="num">${fmtMoney(l.prix_unitaire)}</td>
               <td class="num">${fmtMoney(l.montant)}</td>
             </tr>`).join("")}
@@ -142,6 +205,24 @@ async function loadFacture() {
       <div style="text-align:right; margin-top:16px; font-family:var(--font-display); font-size:1.3rem;">
         Total : <span class="mono">${fmtMoney(facture.montant_total)}</span>
       </div>
+
+      ${historique.length > 0 ? `
+        <div class="no-print" style="border-top:1px solid var(--border); margin-top:22px; padding-top:18px;">
+          <h3>Historique des changements</h3>
+          <table style="margin-top:8px;">
+            <thead><tr><th>Date</th><th>Action</th><th>Détail</th><th class="num">Montant</th></tr></thead>
+            <tbody>
+              ${historique.map(h => `
+                <tr>
+                  <td class="hint">${fmtDateTime(h.created_at)}</td>
+                  <td><span class="badge ${h.type_action === "RETOUR" ? "badge-warn" : "badge-info"}">${h.type_action === "RETOUR" ? "Retour client" : "Modification"}</span></td>
+                  <td>${esc(resumeHistorique(h))}${h.motif ? `<div class="hint" style="margin:0;">Motif : ${esc(h.motif)}</div>` : ""}</td>
+                  <td class="num">${fmtMoney(h.montant_avant)} → ${fmtMoney(h.montant_apres)}</td>
+                </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : ""}
 
       ${facture.statut === "BROUILLON" ? (appIsOnline ? `
         <div class="no-print" style="border-top:1px solid var(--border); margin-top:22px; padding-top:20px;">
@@ -232,7 +313,7 @@ async function marquerPaye() {
   if (!ok) return;
 
   if (!appIsOnline) {
-    if (!queueFieldUpdate("factures", Number(factureId), { paye: true, paye_at: new Date().toISOString() }, `Bon #${factureId} marqué payé`)) return;
+    queueFieldUpdate("factures", Number(factureId), { paye: true, paye_at: new Date().toISOString() }, `Bon #${factureId} marqué payé`);
     showToast("Marqué payé hors ligne — synchronisé automatiquement au retour de la connexion.", "info");
     loadFacture();
     return;
@@ -243,6 +324,240 @@ async function marquerPaye() {
 
   if (error) { showToast(friendlyError(error), "error"); return; }
   showToast("Bon marqué comme payé.", "success");
+  loadFacture();
+}
+
+
+let currentFacture = null;
+let currentLignes = [];
+
+// Résumé d'une ligne de l'historique, en français simple.
+function resumeHistorique(h) {
+  const d = h.details || {};
+  if (h.type_action === "RETOUR") {
+    const txt = (d.lignes || []).map(l => `${l.quantite} × ${l.designation}`).join(", ") || "Retour";
+    const rembourse = Number(d.a_rembourser || 0) > 0 ? ` — ${fmtMoney(d.a_rembourser)} à rendre au client` : "";
+    return txt + rembourse + (d.facture_entierement_retournee ? " — facture entièrement retournée (annulée)" : "");
+  }
+  const a = d.avant || {}, b = d.apres || {};
+  const parts = [];
+  if (a.client_id !== b.client_id) parts.push("client changé");
+  if (a.mode_paiement !== b.mode_paiement) parts.push(`paiement : ${MODE_PAIEMENT_LABELS[a.mode_paiement] || a.mode_paiement} → ${MODE_PAIEMENT_LABELS[b.mode_paiement] || b.mode_paiement}`);
+  const net = (arr) => JSON.stringify((arr || []).map(l => [l.piece_id, l.quantite - (l.quantite_retournee || 0), Number(l.prix_unitaire)]).sort());
+  if (net(a.lignes) !== net(b.lignes)) parts.push("articles, quantités ou prix modifiés");
+  return parts.join(" · ") || "Modification";
+}
+
+// ---------- Retour client ----------
+function netQte(l) { return l.quantite - (l.quantite_retournee || 0); }
+
+function openRetour() {
+  if (!appIsOnline) { showToast("Connexion requise pour enregistrer un retour.", "error"); return; }
+  const lignes = currentLignes.filter(l => netQte(l) > 0);
+  document.getElementById("retour-lignes").innerHTML = `
+    <table>
+      <thead><tr><th>Article</th><th class="num">Vendu</th><th class="num">Prix unit.</th><th style="width:120px;">Qté rendue</th></tr></thead>
+      <tbody>
+        ${lignes.map(l => `
+          <tr>
+            <td>${esc(l.designation)}</td>
+            <td class="num">${netQte(l)}</td>
+            <td class="num">${fmtMoney(l.prix_unitaire)}</td>
+            <td><input type="number" class="retour-qte" min="0" max="${netQte(l)}" step="1" value="0" data-ligne="${l.id}" data-max="${netQte(l)}" data-prix="${Number(l.prix_unitaire)}" oninput="majResumeRetour()"></td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+  document.getElementById("retour-motif").value = "";
+  clearMsg(document.getElementById("retour-msg"));
+  majResumeRetour();
+  document.getElementById("retour-modal").classList.add("open");
+}
+
+function closeRetour() { document.getElementById("retour-modal").classList.remove("open"); }
+
+function lireRetours() {
+  const retours = [];
+  let total = 0, toutRetourne = true;
+  document.querySelectorAll(".retour-qte").forEach(inp => {
+    const max = Number(inp.dataset.max);
+    let q = Math.floor(Number(inp.value) || 0);
+    if (q < 0) q = 0;
+    if (q > max) q = max;
+    if (q > 0) { retours.push({ ligne_id: Number(inp.dataset.ligne), quantite: q }); total += q * Number(inp.dataset.prix); }
+    if (q < max) toutRetourne = false;
+  });
+  return { retours, total, toutRetourne };
+}
+
+function majResumeRetour() {
+  const el = document.getElementById("retour-resume");
+  const { retours, total, toutRetourne } = lireRetours();
+  if (retours.length === 0) { el.style.display = "none"; return; }
+  el.style.display = "flex";
+  const restant = Number(currentFacture.montant_total) - total;
+  let txt = currentFacture.paye
+    ? `À rendre au client : ${fmtMoney(total)}. Nouveau total de la facture : ${fmtMoney(restant)}.`
+    : `Bon à crédit non payé : la dette du client diminue de ${fmtMoney(total)} (nouveau total : ${fmtMoney(restant)}). Rien à rembourser.`;
+  if (toutRetourne) txt += " Tout est retourné : la facture sera annulée.";
+  el.textContent = txt;
+}
+
+async function enregistrerRetour() {
+  const msgEl = document.getElementById("retour-msg");
+  clearMsg(msgEl);
+  const { retours } = lireRetours();
+  if (retours.length === 0) { showMsg(msgEl, "Indique la quantité rendue pour au moins un article."); return; }
+
+  const btn = document.getElementById("retour-btn");
+  btn.disabled = true; btn.textContent = "Enregistrement...";
+  const { data, error } = await supabaseClient.rpc("retour_client", {
+    p_facture_id: Number(factureId),
+    p_retours: retours,
+    p_motif: document.getElementById("retour-motif").value.trim() || null,
+  });
+  btn.disabled = false; btn.textContent = "Enregistrer le retour";
+  if (error) { showMsg(msgEl, friendlyError(error)); return; }
+
+  closeRetour();
+  const arendre = Number(data?.a_rembourser || 0);
+  showToast(arendre > 0 ? `Retour enregistré — stock mis à jour. Pense à rendre ${fmtMoney(arendre)} au client.` : "Retour enregistré — stock mis à jour.", "success", arendre > 0 ? 10000 : 4500);
+  loadFacture();
+}
+
+// ---------- Modification d'une facture validée ----------
+let modifPieces = [];
+let modifWidgets = {};
+let modifCounter = 0;
+
+function closeModif() { document.getElementById("modif-modal").classList.remove("open"); }
+
+function onModifModeChange() {
+  document.getElementById("modif-echeance-field").style.display =
+    document.getElementById("modif-mode").value === "CREDIT" ? "block" : "none";
+}
+
+async function openModif() {
+  if (!appIsOnline) { showToast("Connexion requise pour modifier une facture.", "error"); return; }
+  document.getElementById("modif-numero").textContent = currentFacture.numero_facture || "";
+  document.getElementById("modif-form").style.display = "none";
+  document.getElementById("modif-chargement").style.display = "block";
+  document.getElementById("modif-btn").disabled = true;
+  clearMsg(document.getElementById("modif-msg"));
+  document.getElementById("modif-modal").classList.add("open");
+
+  const [clientsRes, piecesRes] = await Promise.all([
+    fetchAllRows(() => supabaseClient.from("clients").select("id, nom").order("nom").order("id")),
+    fetchAllRows(() => supabaseClient.from("pieces").select("*").order("designation").order("id")),
+  ]);
+  if (clientsRes.error || piecesRes.error) {
+    document.getElementById("modif-chargement").style.display = "none";
+    showMsg(document.getElementById("modif-msg"), friendlyError(clientsRes.error || piecesRes.error));
+    return;
+  }
+  modifPieces = piecesRes.data;
+
+  const sel = document.getElementById("modif-client");
+  sel.innerHTML = clientsRes.data.map(c => `<option value="${c.id}">${esc(c.nom)}</option>`).join("");
+  sel.value = String(currentFacture.client_id);
+  document.getElementById("modif-mode").value = currentFacture.mode_paiement || "ESPECES";
+  document.getElementById("modif-echeance").value = currentFacture.echeance_type || "SEMAINE";
+  onModifModeChange();
+  document.getElementById("modif-motif").value = "";
+
+  document.getElementById("modif-lignes-body").innerHTML = "";
+  modifWidgets = {};
+  currentLignes.filter(l => netQte(l) > 0).forEach(l => {
+    const piece = modifPieces.find(p => p.id === l.piece_id)
+      || { id: l.piece_id, designation: l.designation, reference_oem: "", reference_interne: "", quantite_stock: 0 };
+    addModifLigne({ piece, quantite: netQte(l), prix: Number(l.prix_unitaire) });
+  });
+  if (document.getElementById("modif-lignes-body").children.length === 0) addModifLigne();
+  recalcModifTotal();
+
+  document.getElementById("modif-chargement").style.display = "none";
+  document.getElementById("modif-form").style.display = "block";
+  document.getElementById("modif-btn").disabled = false;
+}
+
+function addModifLigne(prefill) {
+  modifCounter++;
+  const id = modifCounter;
+  const tr = document.createElement("tr");
+  tr.id = `modif-ligne-${id}`;
+  tr.innerHTML = `
+    <td>
+      <div class="piece-search">
+        <input type="text" class="piece-search-input" placeholder="Rechercher une pièce..." autocomplete="off">
+        <div class="piece-search-results"></div>
+      </div>
+    </td>
+    <td><input type="number" class="ligne-qte" min="1" step="1" value="1" oninput="recalcModifTotal()"></td>
+    <td><input type="number" class="ligne-prix" min="0" step="1" value="0" oninput="recalcModifTotal()"></td>
+    <td class="num ligne-montant mono">0 F</td>
+    <td><button type="button" class="btn-icon" title="Retirer la ligne" onclick="removeModifLigne(${id})"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button></td>`;
+  document.getElementById("modif-lignes-body").appendChild(tr);
+
+  modifWidgets[id] = initPieceSearch(tr.querySelector(".piece-search"), modifPieces, {
+    onSelect: (p) => {
+      if (p) tr.querySelector(".ligne-prix").value = p.prix_vente;
+      recalcModifTotal();
+    },
+  });
+  if (prefill) {
+    modifWidgets[id].setSelected(prefill.piece);
+    tr.querySelector(".ligne-qte").value = prefill.quantite;
+    tr.querySelector(".ligne-prix").value = prefill.prix;
+  }
+  recalcModifTotal();
+}
+
+function removeModifLigne(id) {
+  document.getElementById(`modif-ligne-${id}`)?.remove();
+  delete modifWidgets[id];
+  recalcModifTotal();
+}
+
+function recalcModifTotal() {
+  let total = 0;
+  document.querySelectorAll("#modif-lignes-body tr").forEach(tr => {
+    const qte = Number(tr.querySelector(".ligne-qte").value) || 0;
+    const prix = Number(tr.querySelector(".ligne-prix").value) || 0;
+    tr.querySelector(".ligne-montant").textContent = fmtMoney(qte * prix);
+    total += qte * prix;
+  });
+  document.getElementById("modif-total").textContent = fmtMoney(total);
+}
+
+async function enregistrerModif() {
+  const msgEl = document.getElementById("modif-msg");
+  clearMsg(msgEl);
+
+  const lignes = [];
+  document.querySelectorAll("#modif-lignes-body tr").forEach(tr => {
+    const rowId = Number(tr.id.replace("modif-ligne-", ""));
+    const piece = modifWidgets[rowId]?.getSelected();
+    const qte = Math.floor(Number(tr.querySelector(".ligne-qte").value) || 0);
+    const prix = Number(tr.querySelector(".ligne-prix").value);
+    if (piece && qte > 0) lignes.push({ piece_id: piece.id, designation: piece.designation, quantite: qte, prix_unitaire: prix >= 0 ? prix : 0 });
+  });
+  if (lignes.length === 0) { showMsg(msgEl, "Garde au moins une ligne valide (pièce et quantité). Pour tout reprendre, utilise « Annuler la facture »."); return; }
+
+  const mode = document.getElementById("modif-mode").value;
+  const btn = document.getElementById("modif-btn");
+  btn.disabled = true; btn.textContent = "Enregistrement...";
+  const { error } = await supabaseClient.rpc("modifier_facture", {
+    p_facture_id: Number(factureId),
+    p_client_id: Number(document.getElementById("modif-client").value),
+    p_mode_paiement: mode,
+    p_echeance_type: mode === "CREDIT" ? document.getElementById("modif-echeance").value : null,
+    p_lignes: lignes,
+    p_motif: document.getElementById("modif-motif").value.trim() || null,
+  });
+  btn.disabled = false; btn.textContent = "Enregistrer les modifications";
+  if (error) { showMsg(msgEl, friendlyError(error)); return; }
+
+  closeModif();
+  showToast("Facture modifiée — stock et totaux mis à jour.", "success");
   loadFacture();
 }
 

@@ -1,56 +1,10 @@
 // Enregistre le Service Worker qui met l'application en cache (pages, styles, scripts) :
 // c'est ce qui permet d'ouvrir l'app sans aucune connexion, même après avoir redémarré
 // l'ordinateur. Le cache vit sur le disque, dans le profil du navigateur.
-//
-// Mise à jour : le navigateur recherche une nouvelle version de sw.js à chaque ouverture, puis
-// toutes les 30 minutes et à chaque retour sur l'onglet. Dès qu'une nouvelle version est prête,
-// une bannière propose d'actualiser (on ne recharge jamais la page de force : une saisie en
-// cours serait perdue).
 if ("serviceWorker" in navigator) {
-  const hadController = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (hadController) showUpdateBanner(); // première installation : rien à signaler
-  });
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").then((reg) => {
-      const check = () => { if (navigator.onLine) reg.update().catch(() => {}); };
-      setInterval(check, 30 * 60 * 1000);
-      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
-    }).catch((err) => console.error("Échec de l'enregistrement du Service Worker", err));
+    navigator.serviceWorker.register("sw.js").catch((err) => console.error("Échec de l'enregistrement du Service Worker", err));
   });
-}
-
-function showUpdateBanner() {
-  if (document.getElementById("update-banner")) return;
-  const bar = document.createElement("div");
-  bar.id = "update-banner";
-  bar.className = "update-banner no-print";
-  bar.innerHTML = `<span>Une nouvelle version de l'application est disponible.</span><button type="button" class="btn btn-sm">Actualiser</button>`;
-  bar.querySelector("button").addEventListener("click", () => window.location.reload());
-  document.body.appendChild(bar);
-}
-
-// Version de l'application installée, lue depuis le nom du cache (sylla-shell-vXX).
-async function getAppVersion() {
-  try {
-    const names = await caches.keys();
-    const hit = names.map((n) => /^sylla-shell-(v\d+)$/.exec(n)).find(Boolean);
-    return hit ? hit[1] : null;
-  } catch { return null; }
-}
-
-// Force le téléchargement de la dernière version : supprime les copies mises en cache de
-// l'application puis recharge. Les ventes et modifications en attente (stockées à part dans
-// le navigateur) ne sont pas touchées. Nécessite internet.
-async function forceAppUpdate() {
-  if (!navigator.onLine) { alert("Connexion internet requise pour mettre à jour l'application."); return; }
-  try {
-    const regs = await navigator.serviceWorker.getRegistrations();
-    await Promise.all(regs.map((r) => r.unregister()));
-    const names = await caches.keys();
-    await Promise.all(names.filter((n) => n.startsWith("sylla-")).map((n) => caches.delete(n)));
-  } catch (err) { console.error(err); }
-  window.location.reload();
 }
 
 // getSession() peut essayer de rafraîchir le jeton de connexion via le réseau : hors
@@ -247,10 +201,10 @@ function friendlyError(err) {
     return "Cette référence existe déjà.";
   }
   if (msg.includes("violates foreign key")) return "Cet élément est utilisé ailleurs et ne peut pas être supprimé.";
-  if (msg.includes("JWT expired")) return "Session expirée : reconnecte-toi.";
-  if (msg.includes("row-level security") || msg.includes("permission denied")) return "Action non autorisée avec ce compte.";
   if (msg.includes("Stock insuffisant")) return msg.split("CONTEXT")[0].trim();
   if (msg.includes("Invalid login credentials")) return "Code d'accès incorrect.";
+  if (msg.includes("Could not find the function")) return "Cette fonction n'est pas encore installée sur la base de données (migrations à appliquer).";
+  if (msg.includes("permission denied")) return "Action non autorisée.";
   if (msg.includes("facture n'est plus en brouillon") || msg.includes("déjà")) return msg.split("CONTEXT")[0].trim();
   return msg;
 }
@@ -259,14 +213,6 @@ function friendlyError(err) {
 // Le domaine est arbitraire et n'a pas besoin d'exister réellement.
 function codeToEmail(code) {
   return code.trim().toLowerCase().replace(/\s+/g, "") + "@acces.local";
-}
-
-// L'extension Recouvra est active si le propriétaire l'a activée (actif = vrai) et que
-// l'abonnement n'est pas expiré (expire_at vide = pas de date de fin).
-function recouvraEstActif(abonnement) {
-  if (!abonnement || !abonnement.actif) return false;
-  if (abonnement.expire_at && new Date(abonnement.expire_at) <= new Date()) return false;
-  return true;
 }
 
 // =============================================================================
@@ -293,45 +239,47 @@ function readLocal(key, fallback) {
   }
 }
 
-// Libère la place occupée par les copies de cache (catalogue, clients, factures...) — jamais
-// par les files d'attente hors ligne, qui contiennent du travail non encore synchronisé.
-function purgeLocalCaches(exceptKey) {
-  try {
-    Object.keys(localStorage)
-      .filter((k) => k.startsWith("sylla_cache_") && k !== exceptKey)
-      .forEach((k) => localStorage.removeItem(k));
-  } catch {
-    // rien à faire : on réessaiera simplement l'écriture
-  }
-}
-
-// Écrit en local et renvoie true/false. Si le stockage est plein, on supprime d'abord les
-// caches puis on réessaie une fois : une vente en attente ne doit jamais être perdue parce
-// que la copie du catalogue occupe la place.
+// Renvoie true si l'écriture a réussi, false sinon (stockage plein ou bloqué).
 function writeLocal(key, value) {
-  const json = JSON.stringify(value);
   try {
-    localStorage.setItem(key, json);
+    localStorage.setItem(key, JSON.stringify(value));
     return true;
-  } catch {
-    try {
-      purgeLocalCaches(key);
-      localStorage.setItem(key, json);
-      return true;
-    } catch (err) {
-      console.error("Erreur d'écriture locale", err);
-      return false;
-    }
+  } catch (err) {
+    console.error("Erreur d'écriture locale", err);
+    return false;
   }
 }
 
-function notifyStorageFull() {
-  showToast("Espace de stockage du navigateur plein : cette action n'a PAS été enregistrée. Reviens en ligne ou libère de l'espace, puis recommence.", "error", 10000);
+// Quand une vente ou un mouvement en attente ne peut pas être écrit sur le poste, on
+// le dit clairement au lieu de faire croire qu'il est enregistré.
+function warnLocalStorageFull() {
+  showToast("Impossible d'enregistrer hors ligne : la mémoire du navigateur est pleine. Rien n'a été enregistré, reconnecte-toi à internet avant de continuer.", "error", 9000);
 }
 
-// Demande au navigateur de ne pas effacer les données locales de l'app (files d'attente
-// hors ligne) quand il manque de place.
-try { navigator.storage?.persist?.(); } catch { /* sans importance */ }
+// Verrou entre onglets/fenêtres du même navigateur : une seule synchronisation à la fois,
+// sinon deux onglets pourraient rejouer la même vente en attente et la créer en double.
+async function withSyncLock(name, fn) {
+  if (navigator.locks && navigator.locks.request) {
+    await navigator.locks.request(`sylla-${name}`, { ifAvailable: true }, async (lock) => {
+      if (lock) await fn();
+    });
+  } else {
+    await fn();
+  }
+}
+
+// Un élément resté "syncing" (onglet fermé en pleine synchro) ne serait plus jamais rejoué :
+// au chargement d'une page, on le remet en attente.
+function recoverStuckSyncs() {
+  const fix = (get, save) => {
+    const items = get();
+    let changed = false;
+    items.forEach((it) => { if (it.status === "syncing") { it.status = "pending"; changed = true; } });
+    if (changed) save(items);
+  };
+  fix(getPendingSales, savePendingSales);
+  fix(getPendingMovements, savePendingMovements);
+}
 
 function cachePiecesLocally(pieces) {
   writeLocal("sylla_cache_pieces", { savedAt: new Date().toISOString(), items: pieces });
@@ -377,9 +325,8 @@ function getFieldUpdates() {
   return readLocal("sylla_pending_updates", []);
 }
 function saveFieldUpdates(updates) {
-  return writeLocal("sylla_pending_updates", updates);
+  writeLocal("sylla_pending_updates", updates);
 }
-// Renvoie false (et prévient l'utilisateur) si l'action n'a pas pu être enregistrée localement.
 function queueFieldUpdate(table, id, patch, label) {
   const updates = getFieldUpdates();
   updates.push({
@@ -389,9 +336,8 @@ function queueFieldUpdate(table, id, patch, label) {
     status: "pending",
     errorMsg: null,
   });
-  if (!saveFieldUpdates(updates)) { notifyStorageFull(); return false; }
+  saveFieldUpdates(updates);
   document.dispatchEvent(new CustomEvent("sylla:pending-updates-updated"));
-  return true;
 }
 function removeFieldUpdate(id) {
   saveFieldUpdates(getFieldUpdates().filter(u => u.id !== id));
@@ -420,9 +366,8 @@ function getPendingMovements() {
   return readLocal("sylla_pending_movements", []);
 }
 function savePendingMovements(movements) {
-  return writeLocal("sylla_pending_movements", movements);
+  writeLocal("sylla_pending_movements", movements);
 }
-// Renvoie null (et prévient l'utilisateur) si le mouvement n'a pas pu être enregistré localement.
 function queuePendingMovement(movement) {
   const movements = getPendingMovements();
   const entry = {
@@ -433,7 +378,7 @@ function queuePendingMovement(movement) {
     ...movement,
   };
   movements.push(entry);
-  if (!savePendingMovements(movements)) { notifyStorageFull(); return null; }
+  if (!writeLocal("sylla_pending_movements", movements)) { warnLocalStorageFull(); return null; }
   document.dispatchEvent(new CustomEvent("sylla:pending-movements-updated"));
   return entry;
 }
@@ -469,9 +414,8 @@ function getPendingSales() {
   return readLocal("sylla_pending_sales", []);
 }
 function savePendingSales(sales) {
-  return writeLocal("sylla_pending_sales", sales);
+  writeLocal("sylla_pending_sales", sales);
 }
-// Renvoie null (et prévient l'utilisateur) si la vente n'a pas pu être enregistrée localement.
 function queuePendingSale(sale) {
   const sales = getPendingSales();
   const entry = {
@@ -482,7 +426,7 @@ function queuePendingSale(sale) {
     ...sale,
   };
   sales.push(entry);
-  if (!savePendingSales(sales)) { notifyStorageFull(); return null; }
+  if (!writeLocal("sylla_pending_sales", sales)) { warnLocalStorageFull(); return null; }
   document.dispatchEvent(new CustomEvent("sylla:pending-sales-updated"));
   return entry;
 }
@@ -570,55 +514,18 @@ function setOnlineState(isOnline) {
 // chances de rester cohérentes : d'abord les mouvements de stock (souvent des réceptions
 // qui rendent une vente possible), puis les ventes, puis les petites mises à jour de champ.
 async function syncAllPending() {
-  await withSyncLock(async (holdsLock) => {
-    recoverStuckSyncs(holdsLock);
-    await runSyncPendingMovements();
-    await runSyncPendingSales();
-    await runSyncFieldUpdates();
-  }, { quiet: true });
+  await syncPendingMovements();
+  await syncPendingSales();
+  await syncFieldUpdates();
 }
 
-// Un seul onglet à la fois rejoue les files d'attente (sinon la même vente pourrait partir
-// deux fois). Le verrou du navigateur est libéré automatiquement si l'onglet se ferme.
-async function withSyncLock(fn, { quiet = false } = {}) {
-  if (navigator.locks && navigator.locks.request) {
-    return navigator.locks.request("sylla-sync", { ifAvailable: true }, async (lock) => {
-      if (!lock) {
-        if (!quiet) showToast("Une synchronisation est déjà en cours dans un autre onglet.", "info");
-        return null;
-      }
-      return fn(true);
-    });
-  }
-  return fn(false);
-}
-
-// Si l'onglet a été fermé (ou le PC éteint) pendant une synchro, la vente / le mouvement
-// resterait bloqué à "Synchronisation..." pour toujours : on le remet en attente.
-const SYNC_STALE_MS = 2 * 60 * 1000;
-function recoverStuckSyncs(holdsLock) {
-  const isStuck = (x) => x.status === "syncing" && (holdsLock || Date.now() - (x.syncStartedAt || 0) > SYNC_STALE_MS);
-
-  const sales = getPendingSales();
-  let salesChanged = false;
-  sales.forEach((s) => { if (isStuck(s)) { s.status = "pending"; salesChanged = true; } });
-  if (salesChanged) { savePendingSales(sales); document.dispatchEvent(new CustomEvent("sylla:pending-sales-updated")); }
-
-  const movements = getPendingMovements();
-  let movementsChanged = false;
-  movements.forEach((m) => { if (isStuck(m)) { m.status = "pending"; movementsChanged = true; } });
-  if (movementsChanged) { savePendingMovements(movements); document.dispatchEvent(new CustomEvent("sylla:pending-movements-updated")); }
-}
-
-// Points d'entrée publics (boutons "Synchroniser maintenant" / "Réessayer").
-function syncPendingSales() {
-  return withSyncLock(async (holdsLock) => { recoverStuckSyncs(holdsLock); await runSyncPendingSales(); });
-}
-function syncPendingMovements() {
-  return withSyncLock(async (holdsLock) => { recoverStuckSyncs(holdsLock); await runSyncPendingMovements(); });
-}
-function syncFieldUpdates() {
-  return withSyncLock(async () => { await runSyncFieldUpdates(); });
+// Quand une nouvelle version de l'application est installée en arrière-plan, on prévient
+// (sans recharger de force : une vente en cours de saisie serait perdue).
+function watchAppUpdates() {
+  if (!("serviceWorker" in navigator) || !navigator.serviceWorker.controller) return;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    showToast("Une nouvelle version de l'application est prête. Elle sera active au prochain rechargement de la page.", "info", 8000);
+  });
 }
 
 async function handleBackOnline() {
@@ -630,6 +537,8 @@ async function handleBackOnline() {
 function initConnectivity() {
   if (connectivityInitialized) return;
   connectivityInitialized = true;
+  withSyncLock("sync", async () => recoverStuckSyncs());
+  watchAppUpdates();
 
   window.addEventListener("offline", () => setOnlineState(false));
   window.addEventListener("online", async () => {
@@ -642,102 +551,80 @@ function initConnectivity() {
   }
 }
 
-// ---------- Création + validation d'une vente (brouillon, lignes, RPC valider_facture) ----------
-// Utilisée par la vente comptoir en ligne ET par la synchro hors ligne : même chemin, mêmes garde-fous.
-//  - Si une étape échoue, le brouillon créé est supprimé : plus de facture orpheline.
-//  - `factureId` (fourni par une tentative précédente interrompue) permet de reprendre sans doublon :
-//    si cette facture est déjà validée, on ne la recrée pas ; si elle est encore en brouillon, on repart
-//    de lignes propres.
-//  - `onDraft(id | null)` permet à l'appelant de mémoriser l'id du brouillon en cours.
-// Renvoie { id, alreadyDone }. Lève l'erreur Supabase en cas d'échec.
-async function pushSale({ clientId, lignes, total, mode_paiement, echeance_type, factureId = null }, onDraft) {
-  let id = factureId;
-
-  if (id) {
-    const { data: existing, error: errExisting } = await supabaseClient
-      .from("factures").select("id, statut").eq("id", id).maybeSingle();
-    if (errExisting) throw errExisting;
-    if (!existing) id = null;
-    else if (existing.statut !== "BROUILLON") return { id, alreadyDone: true };
-  }
-
-  if (!id) {
-    const { data: facture, error: errFacture } = await supabaseClient
-      .from("factures").insert({ client_id: clientId, montant_total: total }).select().single();
-    if (errFacture) throw errFacture;
-    id = facture.id;
-    if (onDraft) onDraft(id);
-  } else {
-    const { error: errClear } = await supabaseClient.from("factures_lignes").delete().eq("facture_id", id);
-    if (errClear) throw errClear;
-  }
-
-  try {
-    const lignesPayload = lignes.map((l) => ({ ...l, facture_id: id }));
-    const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
-    if (errLignes) throw errLignes;
-
-    const { error: errValidation } = await supabaseClient.rpc("valider_facture", {
-      p_facture_id: id,
-      p_mode_paiement: mode_paiement,
-      p_echeance_type: echeance_type || null,
-    });
-    if (errValidation) throw errValidation;
-  } catch (err) {
-    // Nettoyage : on ne laisse pas un brouillon incomplet derrière nous. Si le nettoyage lui-même
-    // échoue (réseau coupé), on garde l'id pour reprendre proprement à la prochaine tentative.
-    const { error: errCleanup } = await supabaseClient
-      .from("factures").delete().eq("id", id).eq("statut", "BROUILLON");
-    if (!errCleanup && onDraft) onDraft(null);
-    throw err;
-  }
-  return { id, alreadyDone: false };
-}
-
 // ---------- Moteur de synchronisation des ventes en attente ----------
-// Le numéro de facture officiel et le déstockage réel n'existent qu'à partir de la
-// synchronisation, pas au moment de la vente hors ligne.
-async function runSyncPendingSales() {
+// Rejoue exactement le même chemin que la vente en ligne (brouillon + factures_lignes
+// + RPC valider_facture) donc le numéro de facture officiel et le déstockage réel
+// n'existent qu'à partir de la synchronisation, pas au moment de la vente hors ligne.
+async function syncPendingSales() {
   if (syncInProgress) return;
   syncInProgress = true;
   try {
-    const sales = getPendingSales()
-      .filter(s => s.status === "pending" || s.status === "error")
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    await withSyncLock("sync", async () => {
+      const sales = getPendingSales()
+        .filter(s => s.status === "pending" || s.status === "error")
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
-    for (const sale of sales) {
-      updatePendingSale(sale.id, { status: "syncing", errorMsg: null, syncStartedAt: Date.now() });
-      try {
-        let clientId = sale.client.id;
-        if (sale.client.mode === "new") {
-          const { data: newClient, error: errClient } = await supabaseClient
-            .from("clients")
-            .insert({ nom: sale.client.nom, telephone: sale.client.telephone || null, email: sale.client.email || null })
-            .select().single();
-          if (errClient) throw errClient;
-          clientId = newClient.id;
-          // On fige le client en "existing" tout de suite : si une étape suivante échoue et
-          // qu'on retente plus tard, on ne recrée pas un deuxième client en double.
-          updatePendingSale(sale.id, { client: { mode: "existing", id: clientId, nom: sale.client.nom } });
+      for (const sale of sales) {
+        updatePendingSale(sale.id, { status: "syncing", errorMsg: null });
+        try {
+          let clientId = sale.client.id;
+          if (sale.client.mode === "new") {
+            const { data: newClient, error: errClient } = await supabaseClient
+              .from("clients")
+              .insert({ nom: sale.client.nom, telephone: sale.client.telephone || null, email: sale.client.email || null })
+              .select().single();
+            if (errClient) throw errClient;
+            clientId = newClient.id;
+            // On fige le client en "existing" tout de suite : si une étape suivante échoue et
+            // qu'on retente plus tard, on ne recrée pas un deuxième client en double.
+            updatePendingSale(sale.id, { client: { mode: "existing", id: clientId, nom: sale.client.nom } });
+          }
+
+          // Reprise après un échec : si le brouillon de facture existe déjà, on le réutilise
+          // au lieu d'en créer un deuxième (et si la vente est déjà validée, il n'y a plus rien à faire).
+          let factureId = sale.facture_id || null;
+          if (factureId) {
+            const { data: existante, error: errLecture } = await supabaseClient
+              .from("factures").select("id, statut").eq("id", factureId).maybeSingle();
+            if (errLecture) throw errLecture;
+            if (existante && existante.statut !== "BROUILLON") {
+              removePendingSale(sale.id);
+              showToast(`Vente de ${sale.client.nom} déjà synchronisée.`, "success");
+              continue;
+            }
+            if (!existante) factureId = null;
+          }
+
+          if (!factureId) {
+            const { data: facture, error: errFacture } = await supabaseClient
+              .from("factures").insert({ client_id: clientId, montant_total: sale.total }).select().single();
+            if (errFacture) throw errFacture;
+            factureId = facture.id;
+            updatePendingSale(sale.id, { facture_id: factureId });
+          } else {
+            // Brouillon déjà là : on repart de lignes vides pour ne pas les doubler.
+            const { error: errNettoyage } = await supabaseClient.from("factures_lignes").delete().eq("facture_id", factureId);
+            if (errNettoyage) throw errNettoyage;
+          }
+
+          const lignesPayload = sale.lignes.map(l => ({ ...l, facture_id: factureId }));
+          const { error: errLignes } = await supabaseClient.from("factures_lignes").insert(lignesPayload);
+          if (errLignes) throw errLignes;
+
+          const { error: errValidation } = await supabaseClient.rpc("valider_facture", {
+            p_facture_id: factureId,
+            p_mode_paiement: sale.mode_paiement,
+            p_echeance_type: sale.echeance_type || null,
+          });
+          if (errValidation) throw errValidation;
+
+          removePendingSale(sale.id);
+          showToast(`Vente de ${sale.client.nom} synchronisée.`, "success");
+        } catch (err) {
+          updatePendingSale(sale.id, { status: "error", errorMsg: friendlyError(err) });
         }
-
-        // On mémorise l'id du brouillon dès sa création : si l'onglet se ferme ou si le réseau
-        // coupe avant la fin, la tentative suivante reprend cette facture au lieu d'en créer une 2e.
-        await pushSale(
-          {
-            clientId, lignes: sale.lignes, total: sale.total,
-            mode_paiement: sale.mode_paiement, echeance_type: sale.echeance_type,
-            factureId: sale.factureId || null,
-          },
-          (draftId) => updatePendingSale(sale.id, { factureId: draftId })
-        );
-
-        removePendingSale(sale.id);
-        showToast(`Vente de ${sale.client.nom} synchronisée.`, "success");
-      } catch (err) {
-        updatePendingSale(sale.id, { status: "error", errorMsg: friendlyError(err) });
       }
-    }
+    });
   } finally {
     syncInProgress = false;
     document.dispatchEvent(new CustomEvent("sylla:pending-sales-updated"));
@@ -747,30 +634,32 @@ async function runSyncPendingSales() {
 // ---------- Moteur de synchronisation des mouvements de stock en attente ----------
 let movementsSyncInProgress = false;
 
-async function runSyncPendingMovements() {
+async function syncPendingMovements() {
   if (movementsSyncInProgress) return;
   movementsSyncInProgress = true;
   try {
-    const movements = getPendingMovements()
-      .filter(m => m.status === "pending" || m.status === "error")
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    await withSyncLock("sync", async () => {
+      const movements = getPendingMovements()
+        .filter(m => m.status === "pending" || m.status === "error")
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
-    for (const mvt of movements) {
-      updatePendingMovement(mvt.id, { status: "syncing", errorMsg: null, syncStartedAt: Date.now() });
-      try {
-        const { error } = await supabaseClient.rpc("enregistrer_mouvement_stock", {
-          p_piece_id: mvt.piece_id,
-          p_type: mvt.type_mouvement,
-          p_quantite: mvt.quantite,
-          p_motif: mvt.motif || null,
-        });
-        if (error) throw error;
-        removePendingMovement(mvt.id);
-        showToast(`Mouvement de stock (${mvt.piece_designation || "pièce"}) synchronisé.`, "success");
-      } catch (err) {
-        updatePendingMovement(mvt.id, { status: "error", errorMsg: friendlyError(err) });
+      for (const mvt of movements) {
+        updatePendingMovement(mvt.id, { status: "syncing", errorMsg: null });
+        try {
+          const { error } = await supabaseClient.rpc("enregistrer_mouvement_stock", {
+            p_piece_id: mvt.piece_id,
+            p_type: mvt.type_mouvement,
+            p_quantite: mvt.quantite,
+            p_motif: mvt.motif || null,
+          });
+          if (error) throw error;
+          removePendingMovement(mvt.id);
+          showToast(`Mouvement de stock (${mvt.piece_designation || "pièce"}) synchronisé.`, "success");
+        } catch (err) {
+          updatePendingMovement(mvt.id, { status: "error", errorMsg: friendlyError(err) });
+        }
       }
-    }
+    });
   } finally {
     movementsSyncInProgress = false;
     document.dispatchEvent(new CustomEvent("sylla:pending-movements-updated"));
@@ -909,135 +798,30 @@ function initPieceSearch(container, pieces, { onSelect, getStockLabel } = {}) {
 // ---------- Moteur de synchronisation des petites mises à jour en attente ----------
 let fieldUpdatesSyncInProgress = false;
 
-async function runSyncFieldUpdates() {
+async function syncFieldUpdates() {
   if (fieldUpdatesSyncInProgress) return;
   fieldUpdatesSyncInProgress = true;
   try {
-    const updates = getFieldUpdates()
-      .filter(u => u.status === "pending" || u.status === "error")
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    await withSyncLock("sync", async () => {
+      const updates = getFieldUpdates()
+        .filter(u => u.status === "pending" || u.status === "error")
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
-    for (const upd of updates) {
-      try {
-        const { error } = await supabaseClient.from(upd.table).update(upd.patch).eq("id", upd.recordId);
-        if (error) throw error;
-        removeFieldUpdate(upd.id);
-        if (upd.label) showToast(`${upd.label} synchronisé.`, "success");
-      } catch (err) {
-        const all = getFieldUpdates();
-        const idx = all.findIndex(u => u.id === upd.id);
-        if (idx !== -1) { all[idx].status = "error"; all[idx].errorMsg = friendlyError(err); saveFieldUpdates(all); }
+      for (const upd of updates) {
+        try {
+          const { error } = await supabaseClient.from(upd.table).update(upd.patch).eq("id", upd.recordId);
+          if (error) throw error;
+          removeFieldUpdate(upd.id);
+          if (upd.label) showToast(`${upd.label} synchronisé.`, "success");
+        } catch (err) {
+          const all = getFieldUpdates();
+          const idx = all.findIndex(u => u.id === upd.id);
+          if (idx !== -1) { all[idx].status = "error"; all[idx].errorMsg = friendlyError(err); saveFieldUpdates(all); }
+        }
       }
-    }
+    });
   } finally {
     fieldUpdatesSyncInProgress = false;
     document.dispatchEvent(new CustomEvent("sylla:pending-updates-updated"));
   }
 }
-
-
-// ---------- Téléphone : barre de menu en bas, tableaux en fiches, version/mise à jour ----------
-// Tout est construit à partir du menu latéral existant : aucune page HTML à modifier.
-const MOBILE_PRIMARY = { "index.html": "Accueil", "catalogue.html": "Catalogue", "factures.html": "Factures", "credits.html": "Emprunts" };
-
-function initMobileNav() {
-  const sidebar = document.querySelector(".sidebar");
-  if (!sidebar || document.querySelector(".mobile-tabbar")) return;
-  const links = [...sidebar.querySelectorAll(".nav-link")];
-  if (links.length === 0) return;
-  const hrefOf = (a) => a.getAttribute("href");
-
-  const tabbar = document.createElement("nav");
-  tabbar.className = "mobile-tabbar no-print";
-  links.filter((a) => MOBILE_PRIMARY[hrefOf(a)]).forEach((a) => {
-    const t = document.createElement("a");
-    t.href = hrefOf(a);
-    t.className = "tab" + (a.classList.contains("active") ? " active" : "");
-    t.innerHTML = (a.querySelector("svg")?.outerHTML || "") + `<span>${MOBILE_PRIMARY[hrefOf(a)]}</span>`;
-    tabbar.appendChild(t);
-  });
-  const more = document.createElement("button");
-  more.type = "button";
-  const othersActive = links.some((a) => a.classList.contains("active") && !MOBILE_PRIMARY[hrefOf(a)]);
-  more.className = "tab" + (othersActive ? " active" : "");
-  more.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg><span>Plus</span>`;
-  tabbar.appendChild(more);
-
-  const sheet = document.createElement("div");
-  sheet.className = "mobile-sheet no-print";
-  sheet.innerHTML = `<div class="mobile-sheet-panel"></div>`;
-  const panel = sheet.firstElementChild;
-  links.filter((a) => !MOBILE_PRIMARY[hrefOf(a)]).forEach((a) => {
-    const item = document.createElement("a");
-    item.href = hrefOf(a);
-    item.className = "sheet-item" + (a.classList.contains("active") ? " active" : "");
-    item.innerHTML = (a.querySelector("svg")?.outerHTML || "") + `<span>${a.textContent.trim()}</span>`;
-    panel.appendChild(item);
-  });
-  const sep = document.createElement("div"); sep.className = "sheet-sep"; panel.appendChild(sep);
-  const upd = document.createElement("button");
-  upd.type = "button"; upd.className = "sheet-item sheet-update";
-  upd.innerHTML = `<span>Mettre à jour l'application</span><small id="sheet-version"></small>`;
-  upd.addEventListener("click", forceAppUpdate);
-  panel.appendChild(upd);
-  const out = document.createElement("button");
-  out.type = "button"; out.className = "sheet-item sheet-logout";
-  out.innerHTML = `<span>Déconnexion</span>`;
-  out.addEventListener("click", () => logout());
-  panel.appendChild(out);
-
-  const toggle = (open) => sheet.classList.toggle("open", open);
-  more.addEventListener("click", () => toggle(!sheet.classList.contains("open")));
-  sheet.addEventListener("click", (e) => { if (e.target === sheet) toggle(false); });
-
-  document.body.appendChild(sheet);
-  document.body.appendChild(tabbar);
-  getAppVersion().then((v) => { const el = document.getElementById("sheet-version"); if (el && v) el.textContent = v; });
-}
-
-// Version + bouton de mise à jour dans le pied du menu latéral (ordinateur).
-function initUpdateControls() {
-  const footer = document.querySelector(".sidebar-footer");
-  if (!footer || document.getElementById("btn-update-app")) return;
-  const btn = document.createElement("button");
-  btn.type = "button"; btn.id = "btn-update-app"; btn.className = "link-update";
-  btn.textContent = "Mettre à jour l'application";
-  btn.addEventListener("click", forceAppUpdate);
-  footer.appendChild(btn);
-  getAppVersion().then((v) => { if (v) btn.textContent = `Mettre à jour l'application (${v})`; });
-}
-
-// Sur téléphone (CSS), chaque ligne d'un tableau devient une fiche : on recopie donc le titre
-// de colonne sur chaque cellule, et on repère les cellules vides pour les masquer.
-function enhanceTables() {
-  document.querySelectorAll(".main table:not(.no-cards)").forEach((table) => {
-    if (table.closest("#new-facture-card")) return; // le formulaire de facture garde son tableau
-    const heads = [...table.querySelectorAll("thead th")].map((th) => th.textContent.trim());
-    if (heads.length === 0) return;
-    table.classList.add("table-cards");
-    table.querySelectorAll("tbody tr").forEach((tr) => {
-      const cells = [...tr.children].filter((c) => c.tagName === "TD");
-      if (cells.length === 1 && cells[0].colSpan > 1) return; // ligne de regroupement
-      cells.forEach((td, i) => {
-        if (td.dataset.label === undefined) td.dataset.label = heads[i] || "";
-        const txt = td.textContent.trim();
-        td.classList.toggle("td-empty", !td.querySelector("button, a, input, svg") && (txt === "" || txt === "—"));
-      });
-    });
-  });
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  initMobileNav();
-  initUpdateControls();
-  enhanceTables();
-  const main = document.querySelector(".main");
-  if (main) {
-    let queued = false;
-    new MutationObserver(() => {
-      if (queued) return;
-      queued = true;
-      requestAnimationFrame(() => { queued = false; enhanceTables(); });
-    }).observe(main, { childList: true, subtree: true });
-  }
-});
