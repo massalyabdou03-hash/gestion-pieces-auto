@@ -1,48 +1,34 @@
-# Sylla Automobile — gestion de stock et facturation
+# Sylla Automobile — gestion de pièces auto
 
-Application web (HTML / CSS / JavaScript) pour une boutique de pièces automobiles à Ziguinchor :
-catalogue, mouvements de stock, ruptures, factures, emprunts (bons à crédit), clients,
-et l'extension payante **Recouvra** (relance WhatsApp des crédits impayés).
-Fonctionne hors connexion (ventes et mouvements mis en file d'attente, synchronisés au retour d'internet).
+Application web (HTML/JS statique, sans build) : catalogue de pièces, mouvements de stock, factures, emprunts (ventes à crédit), clients et extension payante **Recouvra**. Données : Supabase. Hébergement : Netlify. Fonctionne hors ligne (service worker + files d'attente locales).
 
-## Technique
+## Lancer en local
+```
+python3 -m http.server 8765
+```
+puis ouvrir http://localhost:8765. Le client Supabase est embarqué dans `assets/vendor/` (plus de dépendance CDN pour le cœur de l'app).
 
-- Front : pages HTML statiques + `assets/app.js` (logique commune) + `assets/style.css`.
-- Données : Supabase (Postgres + Auth). Projet `gestion-pieces-auto`.
-- Hébergement : Netlify (`sylla-automobile.netlify.app`). Un poste ouvre l'app avec `Lancer-Sylla-Automobile.bat`.
-- Hors ligne : `sw.js` (Service Worker) + file d'attente dans le navigateur.
+## Base de données Supabase
+Les migrations sont dans `supabase/migrations/`. **À exécuter dans l'ordre**, dans l'éditeur SQL du projet :
 
-## Base de données
+1. `20261012000001_securite_acces.sql` — liste blanche `utilisateurs_autorises`, RLS, retrait des droits `anon`.
+2. `20261012000002_recouvra_proprietaire.sql` — Recouvra : seul le propriétaire active/expire l'abonnement ; le client envoie seulement une preuve de paiement.
+3. `20261012000003_integrite_facturation.sql` — verrouillage des factures validées, journal de stock automatique, fonctions `valider_facture` / `annuler_facture` / mouvements de stock durcies.
+4. `20261012000004_index_et_extensions.sql` — index manquants, `pg_trgm` déplacé dans le schéma `extensions`.
 
-Les changements de base sont dans `supabase/migrations/` (à appliquer dans l'ordre : 001, 002, 003, 004).
+Après la migration 1, tout nouvel utilisateur doit être ajouté à `utilisateurs_autorises` pour accéder aux données.
 
-- Toutes les opérations sensibles passent par des fonctions SQL : `valider_facture`, `annuler_facture`,
-  `enregistrer_mouvement_stock`, `supprimer_mouvement_stock`. Elles ne sont appelables que par un utilisateur connecté.
-- Une facture validée ou annulée ne peut pas être modifiée ou supprimée directement dans la base (seul « payé » change).
-  Pour corriger une facture, on passe par les deux fonctions ci-dessous : aucune limite de durée (une semaine, un an…).
-- **Retour client** (`retour_client`) : bouton sur la facture. Les pièces reviennent en stock, le montant baisse,
-  une dette à crédit diminue d'autant ; si tout est retourné la facture devient « annulée ».
-  Si la facture était déjà payée, l'app rappelle le montant à rembourser.
-- **Modifier une facture** (`modifier_facture`) : client, mode de paiement et lignes. Le stock est recalculé
-  automatiquement (pièces en plus = sortie, en moins = entrée) et refusé si le stock est insuffisant.
-- **Historique des changements** : chaque retour ou modification est enregistré (date, motif, avant/après) dans `factures_historique`.
-- **Recherche** (`rechercher_factures`) sur tout l'historique : numéro, client, téléphone, pièce (désignation, OEM, référence),
-  montant exact, période, statut.
-- Le journal des mouvements et le compteur de factures ne s'écrivent que par ces fonctions.
+## Recouvra (extension payante)
+Le client voit la fenêtre complète uniquement si `recouvra_abonnement.actif = true` et que `expire_at` est vide ou dans le futur. Pour activer / renouveler / couper : `supabase/activer_recouvra.sql` (à lancer par le propriétaire uniquement).
 
-## Activer Recouvra pour un client (administrateur uniquement)
+## Déploiement et mise à jour du client
+Le site est publié par GitHub Pages à chaque fusion sur `main` : `https://massalyabdou03-hash.github.io/gestion-pieces-auto/`.
 
-1. Le client paie 15 000 F par Wave et envoie la référence + la capture depuis la page Recouvra.
-2. Tu vérifies la preuve (Supabase > Storage > `recouvra-preuves`, et `recouvra_abonnement.reference_wave`).
-3. Tu actives : dans l'éditeur SQL de Supabase, passer `actif` à `true` et renseigner `valide_at` dans la ligne unique de `recouvra_abonnement`.
-   Le client ne peut pas le faire lui-même (droits de colonne).
+Côté client, l'application détecte toute seule la nouvelle version (à l'ouverture, toutes les 30 minutes et au retour sur l'onglet) et affiche une bannière « Nouvelle version disponible — Actualiser ». En cas de doute, le bouton **Mettre à jour l'application** (bas du menu à gauche sur ordinateur, menu « Plus » sur téléphone) vide les copies en cache et recharge ; il affiche aussi le numéro de version. Les ventes en attente hors ligne ne sont pas touchées.
 
-## Mettre à jour l'application
+Chaque modification de fichier de l'app doit s'accompagner d'un changement de `CACHE_VERSION` dans `sw.js`, sinon les postes déjà installés gardent l'ancienne version.
 
-1. Modifier les fichiers, puis augmenter `CACHE_VERSION` dans `sw.js`.
-2. Publier (Netlify). Les postes passent à la nouvelle version au 2e chargement.
-
-## Règles à retenir
-
-- Ne jamais mettre la clé `service_role` dans le code. La clé publique de `assets/config.js` est faite pour être visible.
-- Changer la version de supabase-js = modifier l'URL dans toutes les pages + `CACHE_VERSION`.
+## Sécurité — à faire dans le tableau de bord Supabase
+- Authentication → désactiver les inscriptions publiques (sign-ups).
+- Authentication → activer la protection contre les mots de passe compromis.
+- Remplacer le code d'accès par défaut par un code long et unique.

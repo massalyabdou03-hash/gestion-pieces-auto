@@ -66,7 +66,7 @@
   </main>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js"></script>
+<script src="assets/vendor/supabase-js-2.117.0.min.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/app.js"></script>
 <script>
@@ -226,7 +226,7 @@ async function marquerPaye(id) {
 
   if (!appIsOnline) {
     const patch = { paye: true, paye_at: new Date().toISOString() };
-    queueFieldUpdate("factures", id, patch, `Bon #${id} marqué payé`);
+    if (!queueFieldUpdate("factures", id, patch, `Bon #${id} marqué payé`)) return;
     const item = allCredits.find(f => f.id === id);
     if (item) Object.assign(item, patch, { _pendingSync: true });
     showToast("Marqué payé hors ligne — synchronisé automatiquement au retour de la connexion.", "info");
@@ -255,11 +255,13 @@ async function marquerSelectionPayee() {
   const patch = { paye: true, paye_at: new Date().toISOString() };
 
   if (!appIsOnline) {
+    let tousEnregistres = true;
     ids.forEach(id => {
-      queueFieldUpdate("factures", id, patch, `Bon #${id} marqué payé`);
+      if (!queueFieldUpdate("factures", id, patch, `Bon #${id} marqué payé`)) { tousEnregistres = false; return; }
       const item = allCredits.find(f => f.id === id);
       if (item) Object.assign(item, patch, { _pendingSync: true });
     });
+    if (!tousEnregistres) { renderEmprunts(); return; }
     showToast("Marqués payés hors ligne — synchronisés automatiquement au retour de la connexion.", "info");
     selectedIds.clear();
     loadStats();

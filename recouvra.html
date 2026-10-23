@@ -56,6 +56,8 @@
           <p class="hint" style="margin-top:6px;">Effectuez votre transfert de 15 000 F au <strong>77 033 80 30</strong> via Wave, puis complétez ce formulaire.</p>
         </div>
 
+        <div id="paywall-status" class="info-msg" style="display:none;"></div>
+
         <form id="paywall-form" style="margin-top:18px;">
           <label>Référence / ID Transaction Wave<input id="wave-reference" type="text" maxlength="120" required placeholder="Ex : TXN-123456"></label>
           <label>Capture d'écran du reçu Wave<input id="wave-proof" type="file" accept="image/jpeg,image/png,application/pdf" required></label>
@@ -97,7 +99,7 @@
   </main>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js"></script>
+<script src="assets/vendor/supabase-js-2.117.0.min.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/app.js"></script>
 <script>
@@ -136,24 +138,14 @@ function loadStats() {
   document.getElementById("stat-semaine").textContent = semaine;
 }
 
-function relancerWhatsApp(creance) {
-  const phone = creance.clients?.telephone || "";
-  const nom = creance.clients?.nom || "Client";
-  const numero = creance.numero_facture || `#${creance.id}`;
-  const normalized = phone.replace(/[^0-9]/g, "");
+function relancerWhatsApp(phone, nom, numero, montant) {
+  let normalized = (phone || "").replace(/[^0-9]/g, "").replace(/^00/, "");
+  // Numéro sénégalais saisi sans indicatif (ex: 77 545 81 60) : WhatsApp exige le format international.
+  if (/^7\d{8}$/.test(normalized)) normalized = "221" + normalized;
   if (!normalized) { showToast("Numéro de téléphone manquant pour ce client.", "error"); return; }
-  const message = `Bonjour ${nom}, sauf erreur de notre part, votre facture N°${numero} présente un solde de ${fmtMoney(creance.montant_total)}. Merci de procéder au règlement dans les meilleurs délais.`;
-  window.open(`https://wa.me/${normalized}?text=${encodeURIComponent(message)}`, "_blank", "noopener");
+  const message = `Bonjour ${nom}, sauf erreur de notre part, votre facture N°${numero} présente un solde de ${fmtMoney(montant)}. Merci de procéder au règlement dans les meilleurs délais.`;
+  window.open(`https://wa.me/${normalized}?text=${encodeURIComponent(message)}`, "_blank");
 }
-
-// Un seul écouteur sur le tableau (plutôt qu'un onclick par ligne) : les noms de clients
-// ne passent plus jamais dans du code JavaScript écrit dans le HTML.
-document.addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-relance]");
-  if (!btn) return;
-  const creance = allCreances.find(f => String(f.id) === btn.dataset.relance);
-  if (creance) relancerWhatsApp(creance);
-});
 
 function renderCreances() {
   const el = document.getElementById("table-content");
@@ -183,7 +175,7 @@ function renderCreances() {
             <td class="hint">${fmtDate(f.date_echeance)}</td>
             <td><span class="badge ${statutClass}">${statutLabel}</span></td>
             <td class="actions-cell">
-              <button type="button" class="btn btn-sm btn-whatsapp" data-relance="${f.id}">💬 Relancer WhatsApp</button>
+              <button type="button" class="btn btn-sm btn-whatsapp" data-relance="${Number(f.id)}">💬 Relancer WhatsApp</button>
             </td>
           </tr>`;
         }).join("")}
@@ -195,6 +187,16 @@ function renderCreances() {
 async function afficherPaywall(abonnement) {
   document.getElementById("recouvra-paywall").style.display = "block";
 
+  // Dit clairement où en est la demande : expirée, en cours de vérification, ou jamais faite.
+  const statusEl = document.getElementById("paywall-status");
+  if (abonnement?.actif && abonnement.expire_at) {
+    statusEl.textContent = `Votre abonnement a expiré le ${fmtDate(abonnement.expire_at)}. Effectuez un nouveau paiement pour le renouveler.`;
+    statusEl.style.display = "flex";
+  } else if (abonnement?.demande_at) {
+    statusEl.textContent = `Preuve de paiement reçue le ${fmtDate(abonnement.demande_at)} : activation en cours de vérification.`;
+    statusEl.style.display = "flex";
+  }
+
   // Le montant du pitch reste dynamique (donnees reelles), pas fige en dur.
   const { data } = await supabaseClient
     .from("factures").select("montant_total")
@@ -204,28 +206,19 @@ async function afficherPaywall(abonnement) {
     ? `Récupérez vos ${fmtMoney(total)} de créances bloquées en automatisant vos relances clients sur WhatsApp.`
     : `Récupérez vos créances bloquées en automatisant vos relances clients sur WhatsApp.`;
 
-  const form = document.getElementById("paywall-form");
-  const msgEl = document.getElementById("paywall-message");
-  const btn = document.getElementById("paywall-submit");
-
-  // Une preuve a déjà été envoyée : on l'indique au lieu de laisser le formulaire vierge.
-  if (abonnement?.demande_at) {
-    msgEl.textContent = `Preuve de paiement reçue le ${fmtDateTime(abonnement.demande_at)}. L'activation se fait après vérification du paiement.`;
-    btn.textContent = "Renvoyer une preuve";
-  }
-
-  form.addEventListener("submit", async (e) => {
+  document.getElementById("paywall-form").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const msgEl = document.getElementById("paywall-message");
+    const btn = document.getElementById("paywall-submit");
     const file = document.getElementById("wave-proof").files[0];
     const reference = document.getElementById("wave-reference").value.trim();
     if (!file || !reference) { msgEl.textContent = "Renseigne la référence et la capture d'écran."; return; }
 
-    const labelBtn = btn.textContent;
     btn.disabled = true; btn.textContent = "Envoi...";
     const extension = file.name.split(".").pop().toLowerCase();
     const path = `preuve-${Date.now()}.${extension}`;
     const upload = await supabaseClient.storage.from("recouvra-preuves").upload(path, file, { upsert: false, contentType: file.type });
-    if (upload.error) { msgEl.textContent = upload.error.message; btn.disabled = false; btn.textContent = labelBtn; return; }
+    if (upload.error) { msgEl.textContent = upload.error.message; btn.disabled = false; btn.textContent = "Envoyer la preuve de paiement pour activation"; return; }
 
     const { error } = await supabaseClient.from("recouvra_abonnement").update({
       reference_wave: reference,
@@ -235,7 +228,7 @@ async function afficherPaywall(abonnement) {
     }).eq("id", true);
 
     btn.disabled = false;
-    if (error) { msgEl.textContent = friendlyError(error); btn.textContent = labelBtn; return; }
+    if (error) { msgEl.textContent = friendlyError(error); btn.textContent = "Envoyer la preuve de paiement pour activation"; return; }
     btn.textContent = "Demande envoyée";
     msgEl.textContent = "Preuve envoyée. L'activation sera faite après vérification du paiement.";
   });
@@ -243,6 +236,15 @@ async function afficherPaywall(abonnement) {
 
 async function afficherCreances() {
   document.getElementById("recouvra-content").style.display = "block";
+  // Un seul écouteur pour tous les boutons "Relancer" : les noms de clients ne passent plus
+  // par du code HTML (une apostrophe dans « N'Diaye » cassait le bouton).
+  document.getElementById("table-content").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-relance]");
+    if (!btn) return;
+    const f = allCreances.find(x => String(x.id) === btn.dataset.relance);
+    if (!f) return;
+    relancerWhatsApp(f.clients?.telephone, f.clients?.nom || "Client", f.numero_facture || `#${f.id}`, f.montant_total);
+  });
   await loadCreances();
   loadStats();
   renderCreances();
@@ -253,9 +255,11 @@ async function afficherCreances() {
   const session = await requireAuth();
   if (!session) return;
 
-  const { data: abonnement } = await supabaseClient.from("recouvra_abonnement").select("actif, demande_at").eq("id", true).maybeSingle();
+  // select("*") : fonctionne avec ou sans la colonne expire_at (migration 2). L'activation
+  // elle-même est réservée au propriétaire côté base de données (voir supabase/migrations).
+  const { data: abonnement } = await supabaseClient.from("recouvra_abonnement").select("*").eq("id", true).maybeSingle();
 
-  if (abonnement?.actif) {
+  if (recouvraEstActif(abonnement)) {
     await afficherCreances();
   } else {
     await afficherPaywall(abonnement);

@@ -6,16 +6,14 @@
 // Stratégie :
 // - Pages/CSS/JS/images de l'app : "stale-while-revalidate" (réponse immédiate
 //   depuis le cache, mise à jour en arrière-plan si une connexion est dispo).
-// - Bibliothèques externes (Supabase JS, XLSX) : cache-first. Leurs URLs contiennent un
-//   numéro de version EXACT (ex: supabase-js@2.112.4) : pour changer de version, il faut
-//   modifier l'URL dans les pages ET augmenter CACHE_VERSION ci-dessous.
+// - Supabase JS est embarqué dans l'app (assets/vendor, version figée) ; XLSX reste
+//   chargé depuis jsDelivr avec une URL versionnée (xlsx@0.18.5) : cache-first, car
+//   cette URL ne change jamais de contenu.
 // - Appels à l'API Supabase elle-même : jamais interceptés, gérés par le cache
 //   applicatif (localStorage) dans assets/app.js.
 //
 // Pense à changer CACHE_VERSION si tu modifies les fichiers de l'app, sinon les
 // postes déjà installés continueront de servir l'ancienne version en cache.
-// Après une mise en ligne, les postes affichent la nouvelle version au 2e chargement
-// (un message les prévient dès que la mise à jour est prête).
 // =============================================================================
 
 const CACHE_VERSION = "v15";
@@ -36,23 +34,17 @@ const SHELL_ASSETS = [
   "assets/style.css",
   "assets/app.js",
   "assets/config.js",
+  "assets/vendor/supabase-js-2.117.0.min.js",
   "assets/img/logo-sylla-icon.png",
   "assets/img/logo-sylla.png",
-  "assets/img/sylla.ico",
-  "assets/fonts/ibm-plex-sans-latin-400-normal.woff2",
-  "assets/fonts/ibm-plex-sans-latin-500-normal.woff2",
-  "assets/fonts/ibm-plex-sans-latin-600-normal.woff2",
-  "assets/fonts/ibm-plex-sans-latin-700-normal.woff2",
-  "assets/fonts/ibm-plex-sans-condensed-latin-600-normal.woff2",
-  "assets/fonts/ibm-plex-sans-condensed-latin-700-normal.woff2",
-  "assets/fonts/ibm-plex-mono-latin-400-normal.woff2",
-  "assets/fonts/ibm-plex-mono-latin-500-normal.woff2",
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(SHELL_CACHE)
-      .then((cache) => cache.addAll(SHELL_ASSETS))
+      // cache: "reload" : on ignore le cache HTTP du navigateur, sinon une mise à jour pourrait
+      // recopier d'anciens fichiers encore "frais" pendant quelques minutes.
+      .then((cache) => Promise.all(SHELL_ASSETS.map((u) => cache.add(new Request(u, { cache: "reload" })))))
       .then(() => self.skipWaiting())
   );
 });

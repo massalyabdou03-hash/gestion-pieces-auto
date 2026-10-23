@@ -76,7 +76,7 @@
   </main>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.min.js"></script>
+<script src="assets/vendor/supabase-js-2.117.0.min.js"></script>
 <script src="assets/config.js"></script>
 <script src="assets/app.js"></script>
 <script>
@@ -224,9 +224,9 @@ document.getElementById("mvt-form").addEventListener("submit", async (e) => {
   };
 
   if (!appIsOnline) {
-    const entree = queuePendingMovement(payload);
+    const queued = queuePendingMovement(payload);
     btn.disabled = false; btn.textContent = "Enregistrer le mouvement";
-    if (!entree) return;
+    if (!queued) return; // stockage local plein : l'utilisateur a été prévenu, le mouvement n'est PAS enregistré
     showToast("Mouvement enregistré hors ligne — il sera synchronisé automatiquement au retour de la connexion.", "info");
     document.getElementById("mvt-form").reset();
     pieceWidget.clear();
