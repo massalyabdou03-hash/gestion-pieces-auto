@@ -1029,7 +1029,40 @@ function enhanceTables() {
   });
 }
 
+// ---------- Rappel abonnement base de données (2 derniers jours du mois) ----------
+const ABONNEMENT_MONTANT = "11 500 F";
+
+function initRappelAbonnement() {
+  const main = document.querySelector(".main");
+  if (!main || document.querySelector(".rappel-abonnement")) return;
+
+  const now = new Date();
+  const dernierJour = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  if (now.getDate() < dernierJour - 1) return; // seulement l'avant-dernier et le dernier jour
+
+  // Fermée aujourd'hui ? On la remontre le lendemain.
+  const cle = "rappel-abonnement-ferme-" + now.toISOString().slice(0, 10);
+  try { if (localStorage.getItem(cle)) return; } catch (e) {}
+
+  const box = document.createElement("div");
+  box.className = "rappel-abonnement";
+  box.setAttribute("role", "status");
+  box.innerHTML =
+    '<span class="rappel-abonnement-icone" aria-hidden="true">🔔</span>' +
+    '<div class="rappel-abonnement-texte"><strong>Rappel : abonnement de la base de données</strong>' +
+    "<span>Le mois se termine. Merci d'envoyer les <b>" + ABONNEMENT_MONTANT +
+    "</b> de l'abonnement mensuel à Massaly pour que l'application continue de fonctionner.</span></div>" +
+    '<button type="button" class="rappel-abonnement-fermer" aria-label="Fermer le rappel">×</button>';
+
+  box.querySelector("button").addEventListener("click", () => {
+    try { localStorage.setItem(cle, "1"); } catch (e) {}
+    box.remove();
+  });
+  main.prepend(box);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  initRappelAbonnement();
   initMobileNav();
   initUpdateControls();
   enhanceTables();
