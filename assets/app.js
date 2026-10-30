@@ -1032,7 +1032,7 @@ function enhanceTables() {
 // ---------- Rappel abonnement base de données (2 derniers jours du mois) ----------
 const ABONNEMENT_MONTANT = "11 500 F";
 
-function initRappelAbonnement() {
+async function initRappelAbonnement() {
   const main = document.querySelector(".main");
   if (!main || document.querySelector(".rappel-abonnement")) return;
 
@@ -1043,6 +1043,15 @@ function initRappelAbonnement() {
   // Fermée aujourd'hui ? On la remontre le lendemain.
   const cle = "rappel-abonnement-ferme-" + now.toISOString().slice(0, 10);
   try { if (localStorage.getItem(cle)) return; } catch (e) {}
+
+  // Mois déjà marqué payé par Massaly (table abonnement_bdd) ? Alors pas de rappel.
+  const mois = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+  try {
+    const { data, error } = await withTimeout(
+      supabaseClient.from("abonnement_bdd").select("mois").eq("mois", mois).maybeSingle(), 5000);
+    if (!error && data && data.mois === mois) return;
+  } catch (e) { /* hors ligne : on affiche le rappel par précaution */ }
+  if (document.querySelector(".rappel-abonnement")) return;
 
   const box = document.createElement("div");
   box.className = "rappel-abonnement";
