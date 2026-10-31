@@ -16,7 +16,7 @@
 // postes déjà installés continueront de servir l'ancienne version en cache.
 // =============================================================================
 
-const CACHE_VERSION = "v19";
+const CACHE_VERSION = "v20";
 const SHELL_CACHE = `sylla-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `sylla-runtime-${CACHE_VERSION}`;
 
@@ -35,6 +35,8 @@ const SHELL_ASSETS = [
   "assets/app.js",
   "assets/config.js",
   "assets/vendor/supabase-js-2.117.0.min.js",
+  "assets/vendor/jspdf-2.5.2.umd.min.js",
+  "assets/vendor/jspdf-autotable-3.8.4.min.js",
   "assets/img/logo-sylla-icon.png",
   "assets/img/logo-sylla.png",
   "assets/img/apple-touch-icon.png",
